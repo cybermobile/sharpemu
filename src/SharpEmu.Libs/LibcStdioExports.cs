@@ -46,6 +46,8 @@ public static class LibcStdioExports
 
     private static readonly object _ctypeTableGate = new();
     private static nint _ctypeTableBase;
+    private static readonly object _tolowerTableGate = new();
+    private static nint _tolowerTableBase;
 
     [SysAbiExport(
         Nid = "xeYO4u7uyJ0",
@@ -716,6 +718,17 @@ public static class LibcStdioExports
         return (int)OrbisGen2Result.ORBIS_GEN2_OK;
     }
 
+    [SysAbiExport(
+        Nid = "1uJgoVq3bQU",
+        ExportName = "_Getptolower",
+        Target = Generation.Gen4 | Generation.Gen5,
+        LibraryName = "libc")]
+    public static int GetPtolower(CpuContext ctx)
+    {
+        ctx[CpuRegister.Rax] = unchecked((ulong)EnsureToLowerTable());
+        return (int)OrbisGen2Result.ORBIS_GEN2_OK;
+    }
+
     private static unsafe nint EnsureCtypeTable()
     {
         lock (_ctypeTableGate)
@@ -737,6 +750,30 @@ public static class LibcStdioExports
             // guest must point at the c == 0 entry, not the start of the allocation.
             _ctypeTableBase = storage - (CtypeTableLowerBound * sizeof(ushort));
             return _ctypeTableBase;
+        }
+    }
+
+    private static unsafe nint EnsureToLowerTable()
+    {
+        lock (_tolowerTableGate)
+        {
+            if (_tolowerTableBase != 0)
+            {
+                return _tolowerTableBase;
+            }
+
+            var storage = Marshal.AllocHGlobal(CtypeTableEntryCount * sizeof(ushort));
+            var entries = new Span<ushort>((void*)storage, CtypeTableEntryCount);
+            for (var i = 0; i < CtypeTableEntryCount; i++)
+            {
+                var c = i + CtypeTableLowerBound;
+                entries[i] = c is >= 'A' and <= 'Z'
+                    ? unchecked((ushort)(c + ('a' - 'A')))
+                    : unchecked((ushort)c);
+            }
+
+            _tolowerTableBase = storage - (CtypeTableLowerBound * sizeof(ushort));
+            return _tolowerTableBase;
         }
     }
 
