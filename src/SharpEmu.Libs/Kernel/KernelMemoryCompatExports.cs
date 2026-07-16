@@ -122,6 +122,16 @@ public static partial class KernelMemoryCompatExports
         }
     }
 
+    internal static void ResetDirectMemoryForTests()
+    {
+        lock (_memoryGate)
+        {
+            _directAllocations.Clear();
+            _nextPhysicalAddress = 0;
+            _mainDirectMemoryPoolBase = UnsetMainDirectMemoryPoolBase;
+        }
+    }
+
     private static ulong _nextPhysicalAddress;
     private static ulong _nextVirtualAddress;
     // First guest virtual address handed out for direct/flexible mappings
@@ -3282,7 +3292,7 @@ public static partial class KernelMemoryCompatExports
     public static int KernelDirectMemoryQuery(CpuContext ctx)
     {
         var offset = ctx[CpuRegister.Rdi];
-        _ = ctx[CpuRegister.Rsi]; // flags
+        var findNext = ctx[CpuRegister.Rsi] == 1;
         var infoAddress = ctx[CpuRegister.Rdx];
         var infoSize = ctx[CpuRegister.Rcx];
         if (infoAddress == 0 || infoSize < 24)
@@ -3290,15 +3300,15 @@ public static partial class KernelMemoryCompatExports
             return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_INVALID_ARGUMENT;
         }
 
+        if (offset >= DirectMemorySizeBytes)
+        {
+            return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_ACCESS_DENIED;
+        }
+
         lock (_memoryGate)
         {
-            foreach (var block in _directAllocations.Values)
+            if (TryFindDirectMemoryQueryRangeLocked(offset, findNext, out var block))
             {
-                if (offset < block.Start || offset >= block.Start + block.Length)
-                {
-                    continue;
-                }
-
                 if (!ctx.TryWriteUInt64(infoAddress, block.Start) ||
                     !ctx.TryWriteUInt64(infoAddress + sizeof(ulong), block.Start + block.Length) ||
                     !TryWriteInt32(ctx, infoAddress + (sizeof(ulong) * 2), block.MemoryType))
@@ -3310,7 +3320,7 @@ public static partial class KernelMemoryCompatExports
             }
         }
 
-        return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_NOT_FOUND;
+        return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_ACCESS_DENIED;
     }
 
     [SysAbiExport(
@@ -5775,6 +5785,62 @@ public static partial class KernelMemoryCompatExports
 
     private static bool IsAligned(ulong value, ulong alignment) =>
         alignment != 0 && value % alignment == 0;
+
+    private static bool TryFindDirectMemoryQueryRangeLocked(
+        ulong offset,
+        bool findNext,
+        out DirectAllocation range)
+    {
+        range = default;
+        var allocations = new List<DirectAllocation>(_directAllocations.Values);
+        allocations.Sort(static (left, right) => left.Start.CompareTo(right.Start));
+
+        var selectedIndex = -1;
+        for (var index = 0; index < allocations.Count; index++)
+        {
+            var allocation = allocations[index];
+            if (!TryAddU64(allocation.Start, allocation.Length, out var allocationEnd))
+            {
+                continue;
+            }
+
+            if (offset >= allocation.Start && offset < allocationEnd)
+            {
+                selectedIndex = index;
+                break;
+            }
+
+            if (findNext && offset < allocation.Start)
+            {
+                selectedIndex = index;
+                break;
+            }
+        }
+
+        if (selectedIndex < 0)
+        {
+            return false;
+        }
+
+        var selected = allocations[selectedIndex];
+        if (!TryAddU64(selected.Start, selected.Length, out var rangeEnd))
+        {
+            return false;
+        }
+
+        for (var index = selectedIndex + 1; index < allocations.Count; index++)
+        {
+            var next = allocations[index];
+            if (next.Start != rangeEnd || next.MemoryType != selected.MemoryType ||
+                !TryAddU64(next.Start, next.Length, out rangeEnd))
+            {
+                break;
+            }
+        }
+
+        range = new DirectAllocation(selected.Start, rangeEnd - selected.Start, selected.MemoryType);
+        return true;
+    }
 
     private static bool TryAllocateDirectMemoryLocked(
         ulong searchStart,

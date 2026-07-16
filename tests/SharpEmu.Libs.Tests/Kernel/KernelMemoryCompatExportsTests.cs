@@ -3,14 +3,80 @@
 
 using SharpEmu.HLE;
 using SharpEmu.Libs.Kernel;
+using System.Buffers.Binary;
 using System.Globalization;
 using System.Text;
 using Xunit;
 
 namespace SharpEmu.Libs.Tests.Kernel;
 
+[CollectionDefinition(Name, DisableParallelization = true)]
+public sealed class KernelMemoryCollection
+{
+    public const string Name = "Kernel memory compatibility";
+}
+
+[Collection(KernelMemoryCollection.Name)]
 public sealed class KernelMemoryCompatExportsTests
 {
+    private const ulong MemoryBase = 0x1_0000_0000;
+
+    [Fact]
+    public void DirectMemoryQuery_FindNextSkipsFreeSpanAndReportsAllocation()
+    {
+        const ulong allocationAddress = 0x20000;
+        const ulong allocationLength = 0x8000;
+        const int memoryType = 5;
+        const ulong allocationOutAddress = MemoryBase + 0x100;
+        const ulong queryInfoAddress = MemoryBase + 0x200;
+        var memory = new FakeCpuMemory(MemoryBase, 0x1000);
+        var context = new CpuContext(memory, Generation.Gen5);
+        KernelMemoryCompatExports.ResetDirectMemoryForTests();
+
+        try
+        {
+            context[CpuRegister.Rdi] = allocationAddress;
+            context[CpuRegister.Rsi] = allocationAddress + allocationLength;
+            context[CpuRegister.Rdx] = allocationLength;
+            context[CpuRegister.Rcx] = 0x4000;
+            context[CpuRegister.R8] = memoryType;
+            context[CpuRegister.R9] = allocationOutAddress;
+            Assert.Equal(0, KernelMemoryCompatExports.KernelAllocateDirectMemory(context));
+            Assert.Equal(allocationAddress, ReadUInt64(memory, allocationOutAddress));
+
+            context[CpuRegister.Rdi] = 0;
+            context[CpuRegister.Rsi] = 1;
+            context[CpuRegister.Rdx] = queryInfoAddress;
+            context[CpuRegister.Rcx] = 24;
+
+            Assert.Equal(0, KernelMemoryCompatExports.KernelDirectMemoryQuery(context));
+            Assert.Equal(allocationAddress, ReadUInt64(memory, queryInfoAddress));
+            Assert.Equal(allocationAddress + allocationLength, ReadUInt64(memory, queryInfoAddress + 8));
+            Assert.Equal(memoryType, ReadInt32(memory, queryInfoAddress + 16));
+        }
+        finally
+        {
+            KernelMemoryCompatExports.ResetDirectMemoryForTests();
+        }
+    }
+
+    [Fact]
+    public void DirectMemoryQuery_ExhaustedSearchReturnsAccessDenied()
+    {
+        const ulong queryInfoAddress = MemoryBase + 0x200;
+        var memory = new FakeCpuMemory(MemoryBase, 0x1000);
+        var context = new CpuContext(memory, Generation.Gen5);
+        KernelMemoryCompatExports.ResetDirectMemoryForTests();
+        context[CpuRegister.Rdi] = 0;
+        context[CpuRegister.Rsi] = 1;
+        context[CpuRegister.Rdx] = queryInfoAddress;
+        context[CpuRegister.Rcx] = 24;
+
+        var result = KernelMemoryCompatExports.KernelDirectMemoryQuery(context);
+
+        Assert.Equal(unchecked((int)0x8002000D), result);
+    }
+
     [Fact]
     public void PosixStat_MissingFileReturnsMinusOne()
     {
@@ -62,5 +128,19 @@ public sealed class KernelMemoryCompatExportsTests
         {
             CultureInfo.CurrentCulture = previousCulture;
         }
+    }
+
+    private static ulong ReadUInt64(FakeCpuMemory memory, ulong address)
+    {
+        Span<byte> value = stackalloc byte[sizeof(ulong)];
+        Assert.True(memory.TryRead(address, value));
+        return BinaryPrimitives.ReadUInt64LittleEndian(value);
+    }
+
+    private static int ReadInt32(FakeCpuMemory memory, ulong address)
+    {
+        Span<byte> value = stackalloc byte[sizeof(int)];
+        Assert.True(memory.TryRead(address, value));
+        return BinaryPrimitives.ReadInt32LittleEndian(value);
     }
 }

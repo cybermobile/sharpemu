@@ -1442,13 +1442,17 @@ public sealed partial class DirectExecutionBackend
 		var expectedPrivacyInvalidParameter =
 			string.Equals(nid, "D-CzAxQL0XI", StringComparison.Ordinal) &&
 			resultValue == unchecked((int)0x80960009);
+		var expectedDirectMemoryQueryMiss =
+			string.Equals(nid, "BHouLQzh0X0", StringComparison.Ordinal) &&
+			result == OrbisGen2Result.ORBIS_GEN2_ERROR_ACCESS_DENIED;
 		if (!expectedFileProbeMiss &&
 			!expectedTimedWaitTimeout &&
 			!expectedEqueueTimeout &&
 			!expectedMutexTrylockBusy &&
 			!expectedNetAcceptWouldBlock &&
 			!expectedUserServiceNoEvent &&
-			!expectedPrivacyInvalidParameter)
+			!expectedPrivacyInvalidParameter &&
+			!expectedDirectMemoryQueryMiss)
 		{
 			return true;
 		}
