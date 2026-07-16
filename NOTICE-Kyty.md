@@ -15,6 +15,10 @@ SharpEmu includes code translated or adapted from the
 - `src/SharpEmu.Libs/Agc/Gen5LinearMipLayout.cs`
 - `src/SharpEmu.Libs/DiscMap/DiscMapExports.cs`
 - `src/SharpEmu.Libs/Gpu/PersistentGdsBuffer.cs`
+- `src/SharpEmu.HLE/OrbisGen2Result.cs`
+- `src/SharpEmu.Libs/Kernel/KernelEventFlagCompatExports.cs`
+- `src/SharpEmu.Libs/Kernel/KernelEventQueueCompatExports.cs`
+- `src/SharpEmu.Libs/Kernel/KernelSemaphoreCompatExports.cs`
 - `src/SharpEmu.ShaderCompiler.Vulkan/Gen5SpirvTranslator.Gds.cs`
 - `src/SharpEmu.Core/Cpu/Native/DirectExecutionBackend.cs`
 - `src/SharpEmu.Core/Cpu/Native/TlsPatchScanPlan.cs`
