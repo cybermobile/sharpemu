@@ -13,6 +13,7 @@ SharpEmu includes code translated or adapted from the
 - `src/SharpEmu.Libs/Agc/AgcDcbSetShRegisterDirectExports.cs`
 - `src/SharpEmu.Libs/Agc/AgcPrimaryRegisterDefaults.cs`
 - `src/SharpEmu.Libs/DiscMap/DiscMapExports.cs`
+- `src/SharpEmu.Libs/Gpu/PersistentGdsBuffer.cs`
 
 The Kyty portions retain the following MIT license notice:
 

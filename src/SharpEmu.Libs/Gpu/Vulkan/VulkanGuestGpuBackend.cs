@@ -280,6 +280,15 @@ internal sealed class VulkanGuestGpuBackend : IGuestGpuBackend
             threadCountY,
             threadCountZ);
 
+    public long SubmitGdsClear(uint offsetDwords, uint countDwords, uint value) =>
+        VulkanVideoPresenter.SubmitGdsClear(offsetDwords, countDwords, value);
+
+    public long SubmitGdsRead(
+        uint offsetDwords,
+        uint countDwords,
+        Action<ReadOnlyMemory<uint>> completion) =>
+        VulkanVideoPresenter.SubmitGdsRead(offsetDwords, countDwords, completion);
+
     public bool TrySubmitGuestImage(
         ulong address,
         uint width,

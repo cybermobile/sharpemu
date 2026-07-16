@@ -9,6 +9,7 @@ using SharpEmu.Libs.Agc;
 using SharpEmu.Libs.Bink;
 using Silk.NET.Input;
 using SharpEmu.Libs.Gpu;
+using SharpEmu.Libs.Gpu.Vulkan;
 using SharpEmu.ShaderCompiler;
 using SharpEmu.ShaderCompiler.Vulkan;
 using Silk.NET.Vulkan;
@@ -76,6 +77,16 @@ internal sealed record VulkanComputeGuestDispatch(
 internal sealed record VulkanOrderedGuestAction(
     Action Action,
     string DebugName);
+
+internal sealed record VulkanGdsClear(
+    uint OffsetDwords,
+    uint CountDwords,
+    uint Value);
+
+internal sealed record VulkanGdsRead(
+    uint OffsetDwords,
+    uint CountDwords,
+    Action<ReadOnlyMemory<uint>> Completion);
 
 internal sealed record VulkanOrderedGuestFlip(
     long Version,
@@ -990,6 +1001,51 @@ internal static unsafe class VulkanVideoPresenter
             return _closed || _thread is null
                 ? 0
                 : EnqueueGuestWorkLocked(new VulkanOrderedGuestAction(action, debugName));
+        }
+    }
+
+    public static long SubmitGdsClear(
+        uint offsetDwords,
+        uint countDwords,
+        uint value)
+    {
+        if (!GuestGpuGds.IsValidDwordRange(offsetDwords, countDwords))
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(countDwords),
+                $"GDS range {offsetDwords}+{countDwords} exceeds " +
+                $"{GuestGpuGds.DwordCount} dwords.");
+        }
+
+        lock (_gate)
+        {
+            return _closed || _thread is null
+                ? 0
+                : EnqueueGuestWorkLocked(
+                    new VulkanGdsClear(offsetDwords, countDwords, value));
+        }
+    }
+
+    public static long SubmitGdsRead(
+        uint offsetDwords,
+        uint countDwords,
+        Action<ReadOnlyMemory<uint>> completion)
+    {
+        ArgumentNullException.ThrowIfNull(completion);
+        if (!GuestGpuGds.IsValidDwordRange(offsetDwords, countDwords))
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(countDwords),
+                $"GDS range {offsetDwords}+{countDwords} exceeds " +
+                $"{GuestGpuGds.DwordCount} dwords.");
+        }
+
+        lock (_gate)
+        {
+            return _closed || _thread is null
+                ? 0
+                : EnqueueGuestWorkLocked(
+                    new VulkanGdsRead(offsetDwords, countDwords, completion));
         }
     }
 
@@ -2278,6 +2334,7 @@ internal static unsafe class VulkanVideoPresenter
         private VkBuffer _stagingBuffer;
         private DeviceMemory _stagingMemory;
         private ulong _stagingSize;
+        private readonly PersistentGdsBuffer<VulkanGdsAllocation> _gdsBuffer;
         // Perf overlay: CPU-rasterized panel copied through per-slot staging
         // buffers into one image, then blitted onto the swapchain.
         private Image _overlayImage;
@@ -2494,6 +2551,7 @@ internal static unsafe class VulkanVideoPresenter
             public ulong BaseAddress;
             public bool Writable;
             public bool WriteBackToGuest;
+            public bool Persistent;
             public VkBuffer Buffer;
             public DeviceMemory Memory;
             public nint Mapped;
@@ -2592,6 +2650,7 @@ internal static unsafe class VulkanVideoPresenter
 
         public Presenter(uint width, uint height)
         {
+            _gdsBuffer = new PersistentGdsBuffer<VulkanGdsAllocation>(CreateGdsAllocation);
             var options = WindowOptions.DefaultVulkan;
             options.Size = new Vector2D<int>((int)DefaultWindowWidth, (int)DefaultWindowHeight);
             options.Title = VideoOutExports.GetWindowTitle();
@@ -2657,6 +2716,7 @@ internal static unsafe class VulkanVideoPresenter
             CreateCommandResources();
             CreateGuestDrawResources();
             _vulkanReady = true;
+            _ = _gdsBuffer.AcquireForSubmission();
             Console.Error.WriteLine(
                 $"[LOADER][INFO] Vulkan VideoOut ready: {_extent.Width}x{_extent.Height}, format={_swapchainFormat}");
         }
@@ -4320,6 +4380,48 @@ internal static unsafe class VulkanVideoPresenter
                 $"vk.ordered_action queue={_activeGuestQueue.Name} " +
                 $"submission={_activeGuestQueue.SubmissionId} " +
                 $"work_sequence={_activeGuestWorkSequence} name='{work.DebugName}'");
+        }
+
+        private void ExecuteGdsClear(VulkanGdsClear work)
+        {
+            // GDS is shared by graphics and asynchronous-compute queues. Host access
+            // must retire every prior user, not just the active logical queue.
+            WaitForAllGuestSubmissionsForCpuVisibility();
+            if (!_gdsBuffer.TryClearDwords(
+                    work.OffsetDwords,
+                    work.CountDwords,
+                    work.Value))
+            {
+                throw new InvalidOperationException(
+                    $"Invalid queued GDS clear range " +
+                    $"{work.OffsetDwords}+{work.CountDwords}.");
+            }
+
+            TraceVulkanShader(
+                $"vk.gds_clear queue={_activeGuestQueue.Name} " +
+                $"submission={_activeGuestQueue.SubmissionId} " +
+                $"offset_dw={work.OffsetDwords} count_dw={work.CountDwords} " +
+                $"value=0x{work.Value:X8}");
+        }
+
+        private void ExecuteGdsRead(VulkanGdsRead work)
+        {
+            // HOST_COHERENT removes explicit flush/invalidate calls, but it does not
+            // make mapped CPU access safe while another queue is using the buffer.
+            WaitForAllGuestSubmissionsForCpuVisibility();
+            var values = new uint[checked((int)work.CountDwords)];
+            if (!_gdsBuffer.TryReadDwords(work.OffsetDwords, values))
+            {
+                throw new InvalidOperationException(
+                    $"Invalid queued GDS read range " +
+                    $"{work.OffsetDwords}+{work.CountDwords}.");
+            }
+
+            work.Completion(values);
+            TraceVulkanShader(
+                $"vk.gds_read queue={_activeGuestQueue.Name} " +
+                $"submission={_activeGuestQueue.SubmissionId} " +
+                $"offset_dw={work.OffsetDwords} count_dw={work.CountDwords}");
         }
 
         private void ExecuteOrderedGuestFlip(VulkanOrderedGuestFlip work)
@@ -7729,6 +7831,52 @@ internal static unsafe class VulkanVideoPresenter
             };
         }
 
+        private VulkanGdsAllocation CreateGdsAllocation()
+        {
+            var buffer = CreateBuffer(
+                GuestGpuGds.SizeBytes,
+                BufferUsageFlags.StorageBufferBit,
+                MemoryPropertyFlags.HostVisibleBit | MemoryPropertyFlags.HostCoherentBit,
+                out var memory);
+            void* mapped;
+            try
+            {
+                Check(
+                    _vk.MapMemory(
+                        _device,
+                        memory,
+                        0,
+                        GuestGpuGds.SizeBytes,
+                        0,
+                        &mapped),
+                    "vkMapMemory(GDS)");
+            }
+            catch
+            {
+                _vk.DestroyBuffer(_device, buffer, null);
+                _vk.FreeMemory(_device, memory, null);
+                throw;
+            }
+
+            SetDebugName(ObjectType.Buffer, buffer.Handle, "SharpEmu persistent GDS");
+            return new VulkanGdsAllocation(_vk, _device, buffer, memory, (nint)mapped);
+        }
+
+        private GlobalBufferResource CreateGdsGlobalBufferResource()
+        {
+            var allocation = _gdsBuffer.AcquireForSubmission();
+            return new GlobalBufferResource
+            {
+                Writable = true,
+                Persistent = true,
+                Buffer = allocation.Buffer,
+                Memory = allocation.Memory,
+                Mapped = allocation.Mapped,
+                Size = GuestGpuGds.SizeBytes,
+                GuestSize = GuestGpuGds.SizeBytes,
+            };
+        }
+
         private void DestroyGuestBufferAllocation(GuestBufferAllocation allocation)
         {
             if (allocation.Mapped != 0)
@@ -11104,6 +11252,12 @@ internal static unsafe class VulkanVideoPresenter
                         case VulkanOrderedGuestAction orderedAction:
                             ExecuteOrderedGuestAction(orderedAction);
                             break;
+                        case VulkanGdsClear gdsClear:
+                            ExecuteGdsClear(gdsClear);
+                            break;
+                        case VulkanGdsRead gdsRead:
+                            ExecuteGdsRead(gdsRead);
+                            break;
                         case VulkanOrderedGuestFlip orderedFlip:
                             ExecuteOrderedGuestFlip(orderedFlip);
                             break;
@@ -13027,7 +13181,9 @@ internal static unsafe class VulkanVideoPresenter
 
             foreach (var globalBuffer in resources.GlobalMemoryBuffers)
             {
-                if (globalBuffer is null || globalBuffer.Allocation is not null)
+                if (globalBuffer is null ||
+                    globalBuffer.Persistent ||
+                    globalBuffer.Allocation is not null)
                 {
                     continue;
                 }
@@ -13586,6 +13742,7 @@ internal static unsafe class VulkanVideoPresenter
             }
             _samplers.Clear();
             _shaderDigests.Clear();
+            _gdsBuffer.Dispose();
             WriteBackAllDirtyGuestBuffers();
             foreach (var allocation in _guestBufferAllocations)
             {
