@@ -3102,7 +3102,10 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 					continue;
 				}
 
-				if (thread.BlockWaiter is not null && !thread.BlockWaiter.TryWake())
+				if (!ShouldWakeBlockedThread(
+						thread.BlockWaiter,
+						thread.BlockWakeHandler,
+						wakeWithoutPredicate: true))
 				{
 					continue;
 				}
@@ -3131,6 +3134,33 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 		}
 
 		return wakeCount;
+	}
+
+	internal static bool ShouldWakeBlockedThread(
+		IGuestThreadBlockWaiter? waiter,
+		Func<bool>? wakeHandler,
+		bool wakeWithoutPredicate) =>
+		waiter?.TryWake() ?? wakeHandler?.Invoke() ?? wakeWithoutPredicate;
+
+	internal static bool TryResolveBlockedResumeRax(
+		IGuestThreadBlockWaiter? waiter,
+		Func<int>? resumeHandler,
+		out ulong rax)
+	{
+		if (waiter is not null)
+		{
+			rax = unchecked((ulong)(long)waiter.Resume());
+			return true;
+		}
+
+		if (resumeHandler is not null)
+		{
+			rax = unchecked((ulong)(long)resumeHandler());
+			return true;
+		}
+
+		rax = 0;
+		return false;
 	}
 
 	public IReadOnlyList<GuestThreadSnapshot> SnapshotThreads()
@@ -4659,6 +4689,7 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 			LastError = null;
 			GuestCpuContinuation continuation = default;
 			IGuestThreadBlockWaiter? blockWaiter = null;
+			Func<int>? blockResumeHandler = null;
 			var resumeContinuation = false;
 			using (LockGate("RunGuestThread.block"))
 			{
@@ -4670,14 +4701,17 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 					thread.BlockWakeKey = null;
 					blockWaiter = thread.BlockWaiter;
 					thread.BlockWaiter = null;
+					blockResumeHandler = thread.BlockResumeHandler;
+					thread.BlockResumeHandler = null;
+					thread.BlockWakeHandler = null;
 					thread.BlockDeadlineTimestamp = 0;
 					resumeContinuation = true;
 				}
 			}
 
-			if (blockWaiter is not null)
+			if (TryResolveBlockedResumeRax(blockWaiter, blockResumeHandler, out var resumedRax))
 			{
-				continuation = continuation with { Rax = unchecked((ulong)(long)blockWaiter.Resume()) };
+				continuation = continuation with { Rax = resumedRax };
 			}
 
 			if (_logGuestThreads)
@@ -4708,8 +4742,10 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 						thread.State = GuestThreadRunState.Blocked;
 						thread.BlockReason = blockReason;
 						if (thread.HasBlockedContinuation &&
-							thread.BlockWaiter is not null &&
-							thread.BlockWaiter.TryWake())
+							ShouldWakeBlockedThread(
+								thread.BlockWaiter,
+								thread.BlockWakeHandler,
+								wakeWithoutPredicate: false))
 						{
 							thread.State = GuestThreadRunState.Ready;
 							thread.BlockReason = null;
