@@ -65,6 +65,7 @@ public sealed unsafe partial class DirectExecutionBackend
 	private static readonly nint[] _posixPreviousActions = new nint[32];
 	private static int _posixSignalTraceCount;
 	private static long _perfSignalCount;
+	private static int _fatalGuestSignalCount;
 	private static readonly bool _perfSignalCounter =
 		string.Equals(Environment.GetEnvironmentVariable("SHARPEMU_PERF_MEM"), "1", StringComparison.Ordinal);
 
@@ -206,6 +207,7 @@ public sealed unsafe partial class DirectExecutionBackend
 				Console.Error.WriteLine($"[PERF][MEM] posix_faults={n}");
 			}
 		}
+		var terminateGuestSession = false;
 		try
 		{
 			// Guest-image write tracking runs first: it only needs the fault
@@ -223,6 +225,11 @@ public sealed unsafe partial class DirectExecutionBackend
 			{
 				return;
 			}
+
+			terminateGuestSession = ShouldTerminateAfterUnrecoveredPosixFault(
+				_posixSignalWarmup,
+				ReferenceEquals(_activeExecutionBackend, _posixSignalBackend),
+				_activeEntryReturnSentinelRip);
 		}
 		catch
 		{
@@ -233,8 +240,28 @@ public sealed unsafe partial class DirectExecutionBackend
 			_posixSignalHandlerDepth--;
 		}
 
+		if (terminateGuestSession)
+		{
+			var fatalCount = Interlocked.Increment(ref _fatalGuestSignalCount);
+			if (fatalCount == 1)
+			{
+				Console.Error.WriteLine(
+					$"[LOADER][FATAL] Unrecovered guest signal {signal}; terminating the emulation process to prevent a fault loop.");
+				Console.Error.Flush();
+			}
+
+			PosixImmediateExit(4);
+			return;
+		}
+
 		ChainPreviousPosixAction(signal, siginfo, ucontext);
 	}
+
+	internal static bool ShouldTerminateAfterUnrecoveredPosixFault(
+		bool signalWarmup,
+		bool activeGuestExecution,
+		ulong guestReturnSentinel) =>
+		!signalWarmup && activeGuestExecution && guestReturnSentinel >= 0x10000;
 
 	private static bool TryHandlePosixFault(int signal, nint siginfo, nint ucontext)
 	{
@@ -406,4 +433,7 @@ public sealed unsafe partial class DirectExecutionBackend
 
 	[DllImport("libc", SetLastError = true)]
 	private static extern int sigaction(int signum, void* act, void* oldact);
+
+	[DllImport("libc", EntryPoint = "_exit")]
+	private static extern void PosixImmediateExit(int status);
 }
