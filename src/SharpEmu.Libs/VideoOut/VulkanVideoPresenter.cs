@@ -4477,6 +4477,14 @@ internal static unsafe class VulkanVideoPresenter
 
         private void ExecuteGdsClear(VulkanGdsClear work)
         {
+            if (!GuestGpuGds.IsValidDwordRange(work.OffsetDwords, work.CountDwords))
+            {
+                Console.Error.WriteLine(
+                    $"[LOADER][WARN] Dropping invalid queued GDS clear range " +
+                    $"{work.OffsetDwords}+{work.CountDwords}.");
+                return;
+            }
+
             // GDS is shared by graphics and asynchronous-compute queues. Host access
             // must retire every prior user, not just the active logical queue.
             WaitForAllGuestSubmissionsForCpuVisibility();
@@ -4485,9 +4493,10 @@ internal static unsafe class VulkanVideoPresenter
                     work.CountDwords,
                     work.Value))
             {
-                throw new InvalidOperationException(
-                    $"Invalid queued GDS clear range " +
+                Console.Error.WriteLine(
+                    $"[LOADER][WARN] Dropping invalid queued GDS clear range " +
                     $"{work.OffsetDwords}+{work.CountDwords}.");
+                return;
             }
 
             TraceVulkanShader(
@@ -4499,15 +4508,24 @@ internal static unsafe class VulkanVideoPresenter
 
         private void ExecuteGdsRead(VulkanGdsRead work)
         {
+            if (!GuestGpuGds.IsValidDwordRange(work.OffsetDwords, work.CountDwords))
+            {
+                Console.Error.WriteLine(
+                    $"[LOADER][WARN] Dropping invalid queued GDS read range " +
+                    $"{work.OffsetDwords}+{work.CountDwords}.");
+                return;
+            }
+
             // HOST_COHERENT removes explicit flush/invalidate calls, but it does not
             // make mapped CPU access safe while another queue is using the buffer.
             WaitForAllGuestSubmissionsForCpuVisibility();
             var values = new uint[checked((int)work.CountDwords)];
             if (!_gdsBuffer.TryReadDwords(work.OffsetDwords, values))
             {
-                throw new InvalidOperationException(
-                    $"Invalid queued GDS read range " +
+                Console.Error.WriteLine(
+                    $"[LOADER][WARN] Dropping invalid queued GDS read range " +
                     $"{work.OffsetDwords}+{work.CountDwords}.");
+                return;
             }
 
             try

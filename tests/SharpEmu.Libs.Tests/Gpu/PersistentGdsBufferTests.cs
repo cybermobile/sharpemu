@@ -146,6 +146,7 @@ public sealed class PersistentGdsBufferTests
         Assert.Throws<InvalidOperationException>(() => buffer.AcquireForSubmission());
         Assert.Equal(1, factory.CreateCount);
         Assert.Equal(0, factory.ActiveCount);
+        Assert.Equal(1, factory.DisposeCount);
     }
 
     [Fact]
