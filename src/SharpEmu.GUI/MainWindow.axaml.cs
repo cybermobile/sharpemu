@@ -109,10 +109,7 @@ public partial class MainWindow : Window
         GameList.DoubleTapped += (_, _) => LaunchSelected();
         SearchBox.TextChanged += (_, _) => RefreshVisibleGames();
         ConsoleSearchBox.TextChanged += (_, _) => RefreshVisibleConsoleLines();
-        AddFolderButton.Click += async (_, _) => await AddFolderAsync();
         EmptyAddFolderButton.Click += async (_, _) => await AddFolderAsync();
-        RescanButton.Click += async (_, _) => await RescanLibraryAsync();
-        OpenFileButton.Click += async (_, _) => await OpenFileAsync();
         LaunchButton.Click += (_, _) => LaunchSelected();
         ClearLogButton.Click += (_, _) => { _consoleLines.Clear(); _allConsoleLines.Clear(); };
         StopButton.Click += (_, _) => StopEmulator();
@@ -229,7 +226,7 @@ public partial class MainWindow : Window
         PageSubtitleText.Text = Localization.Instance.Get(
             index == 0 ? "Page.Library.Desc" : "Page.Options.Desc");
         LibraryPage.IsVisible = index == 0;
-        LibraryToolbar.IsVisible = index == 0;
+        SearchBox.IsVisible = index == 0;
         SelectedGamePanel.IsVisible = index == 0;
         BackdropImage.IsVisible = index == 0;
         OptionsPage.IsVisible = index == 1;
@@ -462,9 +459,6 @@ public partial class MainWindow : Window
         MenuDiscord.Header = loc.Get("Menu.Community");
 
         SearchBox.Watermark = loc.Get("Library.SearchWatermark");
-        AddFolderButton.Content = loc.Get("Library.AddFolder");
-        RescanButton.Content = loc.Get("Library.Rescan");
-        OpenFileButton.Content = loc.Get("Library.OpenFile");
 
         CtxLaunch.Header = loc.Get("Library.Context.Launch");
         CtxOpenFolder.Header = loc.Get("Library.Context.OpenFolder");
@@ -1870,7 +1864,7 @@ public partial class MainWindow : Window
     {
         LaunchButton.IsEnabled = !_isRunning && GameList.SelectedItem is GameEntry;
         StopButton.IsEnabled = _isRunning;
-        OpenFileButton.IsEnabled = !_isRunning;
+        MenuOpenFile.IsEnabled = !_isRunning;
     }
 
     // ---- Console ----

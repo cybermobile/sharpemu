@@ -102,8 +102,8 @@ SPDX-License-Identifier: GPL-2.0-or-later
     <Grid Grid.Row="1" Margin="28,0,28,20" RowDefinitions="Auto,*,Auto,Auto"
           MaxWidth="1440" HorizontalAlignment="Stretch">
 
-      <!-- Compact emulator command bar: workspace switching remains visible,
-           while library-only commands disappear in settings. -->
+      <!-- Compact emulator command bar: library search leads while workspace
+           switching remains visible. File operations stay in the File menu. -->
       <Grid Grid.Row="0" MinHeight="76" ColumnDefinitions="Auto,*" Margin="0,0,0,12">
         <StackPanel Grid.Column="0" Spacing="2" VerticalAlignment="Center">
           <TextBlock x:Name="PageTitleText" Text="Library" FontSize="26" FontWeight="Bold"
@@ -114,26 +114,16 @@ SPDX-License-Identifier: GPL-2.0-or-later
 
         <WrapPanel Grid.Column="1" Orientation="Horizontal" HorizontalAlignment="Right"
                    VerticalAlignment="Center" AutomationProperties.LandmarkType="Navigation">
+          <TextBox x:Name="SearchBox" Watermark="Search library…" Width="240" Margin="3,0,10,0"
+                   VerticalAlignment="Center" AutomationProperties.Name="Search library"
+                   AutomationProperties.HelpText="Filter games by title or title ID."
+                   AutomationProperties.AutomationId="LibrarySearchBox" />
           <Button x:Name="LibraryTabButton" Classes="toolbarNav active" Content="Library" Margin="3,0"
                   ToolTip.Tip="Controller shortcut: L1 / LB"
                   AutomationProperties.AutomationId="LibraryPageButton" />
-          <Button x:Name="OptionsTabButton" Classes="toolbarNav" Content="Settings" Margin="3,0,10,0"
+          <Button x:Name="OptionsTabButton" Classes="toolbarNav" Content="Settings" Margin="3,0"
                   ToolTip.Tip="Controller shortcut: R1 / RB"
                   AutomationProperties.AutomationId="OptionsPageButton" />
-          <StackPanel x:Name="LibraryToolbar" Orientation="Horizontal">
-            <TextBox x:Name="SearchBox" Watermark="Search library…" Width="240" Margin="3,0"
-                     VerticalAlignment="Center" AutomationProperties.Name="Search library"
-                     AutomationProperties.HelpText="Filter games by title or title ID."
-                     AutomationProperties.AutomationId="LibrarySearchBox" />
-            <Button x:Name="AddFolderButton" Classes="ghost compact" Content="＋ Add" Margin="3,0"
-                    VerticalAlignment="Center" AutomationProperties.AutomationId="AddGameFolderButton" />
-            <Button x:Name="RescanButton" Classes="ghost compact" Content="⟳" Margin="3,0"
-                    ToolTip.Tip="Rescan library" VerticalAlignment="Center"
-                    AutomationProperties.Name="Rescan library"
-                    AutomationProperties.AutomationId="RescanLibraryButton" />
-            <Button x:Name="OpenFileButton" Classes="ghost compact" Content="Open file…" Margin="3,0"
-                    VerticalAlignment="Center" AutomationProperties.AutomationId="OpenExecutableButton" />
-          </StackPanel>
         </WrapPanel>
       </Grid>
 

@@ -33,9 +33,9 @@ SPDX-License-Identifier: GPL-2.0-or-later
 
 ## Information architecture
 
-- Primary navigation: The library is the default desktop workspace. A compact top command bar exposes library, settings, launch, and diagnostic actions; settings use a category rail inside their own workspace rather than consuming permanent main-window width.
+- Primary navigation: The library is the default desktop workspace. The compact top command bar leads with context-sensitive library search and places Library and Settings immediately to its right. File operations live in the native File menu, with Add Folder repeated only as empty-library recovery; settings use a category rail inside their own workspace rather than consuming permanent main-window width.
 - Core routes/screens: Library grid, library empty/search/loading states, General options, device-specific Controls/input mapping, Environment/debug options, selected-game action bar, and collapsible console.
-- Content hierarchy: Native window/menu context and compact commands first; search and library content second; selected-title metadata and primary launch action in a distinct bottom inspector; diagnostics and emulator/build status last. Controls asks for the active input device first and shows only that device's settings.
+- Content hierarchy: Native window/menu context first; library search and workspace switching second; library content third; selected-title metadata and the primary launch action in a distinct bottom inspector; diagnostics and emulator/build status last. Controls asks for the active input device first and shows only that device's settings.
 
 ## Design principles
 
