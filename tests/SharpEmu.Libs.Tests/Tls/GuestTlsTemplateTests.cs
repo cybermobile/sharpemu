@@ -6,6 +6,7 @@ using Xunit;
 
 namespace SharpEmu.Libs.Tests.Tls;
 
+[Collection("Guest TLS state")]
 public sealed class GuestTlsTemplateTests
 {
     [Fact]

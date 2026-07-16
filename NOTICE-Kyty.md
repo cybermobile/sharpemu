@@ -16,6 +16,9 @@ SharpEmu includes code translated or adapted from the
 - `src/SharpEmu.Libs/DiscMap/DiscMapExports.cs`
 - `src/SharpEmu.Libs/Gpu/PersistentGdsBuffer.cs`
 - `src/SharpEmu.ShaderCompiler.Vulkan/Gen5SpirvTranslator.Gds.cs`
+- `src/SharpEmu.Core/Cpu/Native/DirectExecutionBackend.cs`
+- `src/SharpEmu.Core/Cpu/Native/TlsPatchScanPlan.cs`
+- `src/SharpEmu.Core/Loader/SelfLoader.cs`
 
 The Kyty portions retain the following MIT license notice:
 
