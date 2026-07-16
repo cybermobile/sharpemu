@@ -75,7 +75,7 @@ SPDX-License-Identifier: GPL-2.0-or-later
 ## Responsive behavior
 
 - Supported breakpoints/devices: Desktop windows from 980 px wide through large maximized displays; Windows, Linux, and macOS.
-- Layout adaptations: The library uses a reflowing wrap panel; content width is capped; toolbars wrap or condense before controls clip; options remain scrollable. The input-device switch stays above the active mode, and the controller schematic scales proportionally without horizontal scrolling.
+- Layout adaptations: The library uses a reflowing wrap panel; content width is capped; toolbars wrap or condense before controls clip; options remain scrollable. General, Controls, and Environment share one stable settings-workspace width and scrollbar gutter so category changes never move the rail or card edges. The input-device switch stays above the active mode, and the controller schematic scales proportionally without horizontal scrolling.
 - Touch/hover differences: Interactive targets are at least 36 px high on desktop; hover is supplemental and never the sole state indicator.
 
 ## Interaction states

@@ -225,7 +225,7 @@ SPDX-License-Identifier: GPL-2.0-or-later
         <!-- Settings workspace: PCSX2-inspired category rail with an explicit
              global scope. Debug/environment controls remain a separate category. -->
         <Grid x:Name="OptionsPage" IsVisible="False" RowDefinitions="Auto,*"
-              MaxWidth="1120" HorizontalAlignment="Center"
+              MaxWidth="1120" HorizontalAlignment="Stretch"
               AutomationProperties.LandmarkType="Main">
           <Grid Grid.Row="0" ColumnDefinitions="*,Auto" Margin="0,4,0,14">
             <StackPanel Spacing="3">
@@ -238,9 +238,11 @@ SPDX-License-Identifier: GPL-2.0-or-later
               <TextBlock x:Name="SettingsScopeBadge" Text="ALL GAMES" Classes="navLabel" />
             </Border>
           </Grid>
-          <TabControl Grid.Row="1" TabStripPlacement="Left">
-            <TabItem x:Name="GeneralTabItem" Header="General" FontSize="15">
-              <ScrollViewer HorizontalScrollBarVisibility="Disabled">
+          <TabControl Grid.Row="1" TabStripPlacement="Left" HorizontalAlignment="Stretch">
+            <TabItem x:Name="GeneralTabItem" Header="General" FontSize="15"
+                     HorizontalContentAlignment="Stretch">
+              <ScrollViewer HorizontalScrollBarVisibility="Disabled"
+                            VerticalScrollBarVisibility="Visible" HorizontalAlignment="Stretch">
                 <StackPanel Margin="0,14,0,16" Spacing="16" MaxWidth="900" HorizontalAlignment="Stretch">
 
                   <Border Classes="card">
@@ -453,8 +455,10 @@ SPDX-License-Identifier: GPL-2.0-or-later
                 </StackPanel>
               </ScrollViewer>
             </TabItem>
-            <TabItem x:Name="ControlsTabItem" Header="Controls" FontSize="15">
-              <ScrollViewer HorizontalScrollBarVisibility="Disabled">
+            <TabItem x:Name="ControlsTabItem" Header="Controls" FontSize="15"
+                     HorizontalContentAlignment="Stretch">
+              <ScrollViewer HorizontalScrollBarVisibility="Disabled"
+                            VerticalScrollBarVisibility="Visible" HorizontalAlignment="Stretch">
                 <StackPanel Margin="0,14,0,16" Spacing="16" MaxWidth="900" HorizontalAlignment="Stretch">
                   <Grid ColumnDefinitions="*,Auto">
                     <StackPanel Spacing="3" Margin="0,0,16,0">
@@ -653,8 +657,10 @@ SPDX-License-Identifier: GPL-2.0-or-later
                 </StackPanel>
               </ScrollViewer>
             </TabItem>
-            <TabItem x:Name="EnvTabItem" Header="Environment" FontSize="15">
-              <ScrollViewer HorizontalScrollBarVisibility="Disabled">
+            <TabItem x:Name="EnvTabItem" Header="Environment" FontSize="15"
+                     HorizontalContentAlignment="Stretch">
+              <ScrollViewer HorizontalScrollBarVisibility="Disabled"
+                            VerticalScrollBarVisibility="Visible" HorizontalAlignment="Stretch">
                 <StackPanel Margin="0,14,0,16" Spacing="16" MaxWidth="900" HorizontalAlignment="Stretch">
 
                   <Border Classes="card">
