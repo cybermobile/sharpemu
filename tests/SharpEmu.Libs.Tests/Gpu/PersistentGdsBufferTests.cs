@@ -125,8 +125,47 @@ public sealed class PersistentGdsBufferTests
         Assert.Equal(3, factory.DisposeCount);
     }
 
+    [Fact]
+    public void AcquireForSubmission_AfterDispose_Throws()
+    {
+        var factory = new CountingAllocationFactory();
+        var buffer = new PersistentGdsBuffer<FakeGdsAllocation>(factory.Create);
+        buffer.Dispose();
+
+        Assert.Throws<ObjectDisposedException>(() => buffer.AcquireForSubmission());
+        Assert.Equal(0, factory.CreateCount);
+    }
+
+    [Fact]
+    public void AcquireForSubmission_WrongAllocationSize_DisposesAndThrows()
+    {
+        var factory = new CountingAllocationFactory(
+            sizeBytes: GuestGpuGds.SizeBytes / 2);
+        using var buffer = new PersistentGdsBuffer<FakeGdsAllocation>(factory.Create);
+
+        Assert.Throws<InvalidOperationException>(() => buffer.AcquireForSubmission());
+        Assert.Equal(1, factory.CreateCount);
+        Assert.Equal(0, factory.ActiveCount);
+        Assert.Equal(1, factory.DisposeCount);
+    }
+
+    [Fact]
+    public void AcquireForSubmission_NullFactoryResult_Throws()
+    {
+        using var buffer = new PersistentGdsBuffer<FakeGdsAllocation>(() => null!);
+
+        Assert.Throws<InvalidOperationException>(() => buffer.AcquireForSubmission());
+    }
+
     private sealed class CountingAllocationFactory
     {
+        private readonly ulong? _sizeBytes;
+
+        public CountingAllocationFactory(ulong? sizeBytes = null)
+        {
+            _sizeBytes = sizeBytes;
+        }
+
         public int ActiveCount { get; private set; }
 
         public int CreateCount { get; private set; }
@@ -137,11 +176,13 @@ public sealed class PersistentGdsBufferTests
         {
             ActiveCount++;
             CreateCount++;
-            return new FakeGdsAllocation(() =>
-            {
-                ActiveCount--;
-                DisposeCount++;
-            });
+            return new FakeGdsAllocation(
+                () =>
+                {
+                    ActiveCount--;
+                    DisposeCount++;
+                },
+                _sizeBytes);
         }
     }
 
@@ -150,16 +191,17 @@ public sealed class PersistentGdsBufferTests
         private readonly Action _onDispose;
         private bool _disposed;
 
-        public FakeGdsAllocation(Action onDispose)
+        public FakeGdsAllocation(Action onDispose, ulong? sizeBytes = null)
         {
             _onDispose = onDispose;
+            SizeBytes = sizeBytes ?? GuestGpuGds.SizeBytes;
             Data = new uint[GuestGpuGds.DwordCount];
             Array.Fill(Data, 0xFFFF_FFFFu);
         }
 
         public uint[] Data { get; }
 
-        public ulong SizeBytes => GuestGpuGds.SizeBytes;
+        public ulong SizeBytes { get; }
 
         public void ClearDwords(uint offsetDwords, uint countDwords, uint value) =>
             Data.AsSpan(checked((int)offsetDwords), checked((int)countDwords)).Fill(value);
