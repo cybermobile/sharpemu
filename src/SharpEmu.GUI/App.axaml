@@ -52,6 +52,27 @@ SPDX-License-Identifier: GPL-2.0-or-later
       <Setter Property="Padding" Value="16" />
     </Style>
 
+    <Style Selector="Border.sidebar">
+      <Setter Property="Background" Value="#0A0D14" />
+      <Setter Property="BorderBrush" Value="{StaticResource CardBorderBrush}" />
+      <Setter Property="BorderThickness" Value="0,0,1,0" />
+    </Style>
+
+    <Style Selector="Border.actionPanel">
+      <Setter Property="Background" Value="#181E2A" />
+      <Setter Property="BorderBrush" Value="{StaticResource CardBorderBrush}" />
+      <Setter Property="BorderThickness" Value="1" />
+      <Setter Property="CornerRadius" Value="14" />
+      <Setter Property="BoxShadow" Value="0 10 26 0 #40000000" />
+    </Style>
+
+    <Style Selector="TextBlock.navLabel">
+      <Setter Property="FontSize" Value="10" />
+      <Setter Property="FontWeight" Value="SemiBold" />
+      <Setter Property="LetterSpacing" Value="1.4" />
+      <Setter Property="Foreground" Value="{StaticResource FaintBrush}" />
+    </Style>
+
     <Style Selector="Border.pill">
       <Setter Property="Background" Value="{StaticResource ElevatedBrush}" />
       <Setter Property="CornerRadius" Value="999" />
@@ -177,31 +198,25 @@ SPDX-License-Identifier: GPL-2.0-or-later
       <Setter Property="Foreground" Value="{StaticResource TextBrush}" />
     </Style>
 
-    <Style Selector="Border.segmentGroup">
-      <Setter Property="Background" Value="{StaticResource CardBrush}" />
-      <Setter Property="BorderBrush" Value="{StaticResource CardBorderBrush}" />
-      <Setter Property="BorderThickness" Value="1" />
-      <Setter Property="CornerRadius" Value="10" />
-      <Setter Property="Padding" Value="4" />
-    </Style>
-
-    <!-- Top-level page switcher. Active state uses contrast, fill, and a
-         border so it remains legible without relying on color alone. -->
-    <Style Selector="Button.segment">
+    <!-- Persistent top-level navigation. Active state uses contrast, fill,
+         weight, and a leading rail so it is never color-only. -->
+    <Style Selector="Button.navItem">
       <Setter Property="Background" Value="Transparent" />
       <Setter Property="BorderBrush" Value="Transparent" />
-      <Setter Property="BorderThickness" Value="1" />
+      <Setter Property="BorderThickness" Value="3,0,0,0" />
       <Setter Property="Foreground" Value="{StaticResource MutedBrush}" />
-      <Setter Property="FontSize" Value="14" />
+      <Setter Property="FontSize" Value="15" />
       <Setter Property="FontWeight" Value="SemiBold" />
-      <Setter Property="Padding" Value="18,8" />
-      <Setter Property="CornerRadius" Value="7" />
+      <Setter Property="HorizontalAlignment" Value="Stretch" />
+      <Setter Property="HorizontalContentAlignment" Value="Left" />
+      <Setter Property="Padding" Value="18,13" />
+      <Setter Property="CornerRadius" Value="8" />
     </Style>
-    <Style Selector="Button.segment:pointerover /template/ ContentPresenter#PART_ContentPresenter">
+    <Style Selector="Button.navItem:pointerover /template/ ContentPresenter#PART_ContentPresenter">
       <Setter Property="Background" Value="{StaticResource ElevatedBrush}" />
       <Setter Property="Foreground" Value="{StaticResource TextBrush}" />
     </Style>
-    <Style Selector="Button.segment.active">
+    <Style Selector="Button.navItem.active">
       <Setter Property="Foreground" Value="{StaticResource TextBrush}" />
       <Setter Property="Background" Value="{StaticResource AccentSubtleBrush}" />
       <Setter Property="BorderBrush" Value="{StaticResource AccentBrush}" />

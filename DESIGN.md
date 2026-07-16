@@ -33,9 +33,9 @@ SPDX-License-Identifier: GPL-2.0-or-later
 
 ## Information architecture
 
-- Primary navigation: Library and Options are the two top-level destinations. General and Environment are secondary option categories.
+- Primary navigation: Library and Options live in a persistent left rail with a clearly filled active state. General and Environment are secondary option categories within Options.
 - Core routes/screens: Library grid, library empty/search/loading states, General options, Environment/debug options, selected-game action bar, and collapsible console.
-- Content hierarchy: Current destination and primary action first; library content second; selected-title metadata and runtime state third; diagnostics and emulator path last.
+- Content hierarchy: Persistent brand/navigation rail first; current destination and contextual commands in a top header; library or settings content in the main canvas; selected-title metadata and primary launch action in a distinct bottom inspector; diagnostics and emulator path last.
 
 ## Design principles
 
@@ -57,7 +57,7 @@ SPDX-License-Identifier: GPL-2.0-or-later
 ## Components
 
 - Existing components to reuse: Avalonia Fluent controls, card and pill styles, library tile `ListBox`, native `TabControl`, launch bar, and console panel.
-- New/changed components: Clear active navigation treatment, consistent control heights, visible focus rings, accessible search/toolbar metadata, improved empty state, and compact selected-game action surface.
+- New/changed components: Persistent navigation rail, contextual page header, clear active navigation treatment, consistent control heights, visible focus rings, accessible search/toolbar metadata, improved empty state, larger artwork grid, and a visually distinct selected-game inspector.
 - Variants and states: Default, pointer-over, pressed, keyboard-focus, selected/checked, disabled, loading, empty, error, running, and stopped.
 - Token/component ownership: Shared color, typography, shape, control-size, and state tokens live in `App.axaml`; page composition remains in `MainWindow.axaml`.
 

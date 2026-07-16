@@ -213,6 +213,8 @@ public partial class MainWindow : Window
         _activePageIndex = index;
         SetActiveClass(LibraryTabButton, index == 0);
         SetActiveClass(OptionsTabButton, index == 1);
+        PageTitleText.Text = Localization.Instance.Get(
+            index == 0 ? "Page.Library" : "Page.Options");
         LibraryPage.IsVisible = index == 0;
         LibraryToolbar.IsVisible = index == 0;
         OptionsPage.IsVisible = index == 1;
@@ -352,8 +354,8 @@ public partial class MainWindow : Window
 
     private int TilesPerRow()
     {
-        // Tile footprint: 148 content + 16 item padding + 8 item margin.
-        const double TileOuterWidth = 172;
+        // Tile footprint: 168 content + 16 item padding + 8 item margin.
+        const double TileOuterWidth = 192;
         var width = GameList.Bounds.Width;
         return width > TileOuterWidth ? (int)(width / TileOuterWidth) : 1;
     }
@@ -413,6 +415,10 @@ public partial class MainWindow : Window
 
         LibraryTabButton.Content = loc.Get("Page.Library");
         OptionsTabButton.Content = loc.Get("Page.Options");
+        PageTitleText.Text = loc.Get(_activePageIndex == 0 ? "Page.Library" : "Page.Options");
+        SidebarSectionTitle.Text = loc.Get("Sidebar.Workspace");
+        BuildCardTitle.Text = loc.Get("Sidebar.BuildTitle");
+        BuildCardDescription.Text = loc.Get("Sidebar.BuildDesc");
 
         SearchBox.Watermark = loc.Get("Library.SearchWatermark");
         AddFolderButton.Content = loc.Get("Library.AddFolder");
@@ -606,6 +612,8 @@ public partial class MainWindow : Window
         {
             WindowState = WindowState.Normal;
             ExtendClientAreaChromeHints = ExtendClientAreaChromeHints.PreferSystemChrome;
+            MainShell.ColumnDefinitions[0].Width = new GridLength(224);
+            Sidebar.IsVisible = true;
             TitleBar.IsVisible = true;
             StatusBar.IsVisible = true;
         }
@@ -613,6 +621,8 @@ public partial class MainWindow : Window
         {
             WindowState = WindowState.FullScreen;
             ExtendClientAreaChromeHints = ExtendClientAreaChromeHints.NoChrome;
+            Sidebar.IsVisible = false;
+            MainShell.ColumnDefinitions[0].Width = new GridLength(0);
             TitleBar.IsVisible = false;
             StatusBar.IsVisible = false;
         }

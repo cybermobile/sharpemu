@@ -6,6 +6,10 @@
   "Page.GameCount.One": "1 game",
   "Page.GameCount.Other": "{0} games",
 
+  "Sidebar.Workspace": "WORKSPACE",
+  "Sidebar.BuildTitle": "EXPERIMENTAL BUILD",
+  "Sidebar.BuildDesc": "PS5 emulation is still under active development.",
+
   "Library.SearchWatermark": "Search library…",
   "Library.AddFolder": "＋ Add folder",
   "Library.Rescan": "⟳ Rescan",
