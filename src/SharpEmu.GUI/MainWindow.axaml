@@ -125,6 +125,11 @@ SPDX-License-Identifier: GPL-2.0-or-later
           <Button x:Name="OptionsTabButton" Classes="toolbarNav" Content="Settings" Margin="3,0"
                   ToolTip.Tip="Controller shortcut: R1 / RB"
                   AutomationProperties.AutomationId="OptionsPageButton" />
+          <Button x:Name="ExitFullscreenButton" Classes="accent"
+                  Content="Exit fullscreen   Esc" IsVisible="False" Margin="10,0,3,0"
+                  AutomationProperties.Name="Exit fullscreen"
+                  AutomationProperties.HelpText="Leave fullscreen with this button, Escape, or F11."
+                  AutomationProperties.AutomationId="ExitFullscreenButton" />
         </WrapPanel>
       </Grid>
 
@@ -788,13 +793,5 @@ SPDX-License-Identifier: GPL-2.0-or-later
                  AutomationProperties.LiveSetting="Polite" />
     </Grid>
 
-    <!-- Fullscreen must always have an on-screen recovery path in addition
-         to the Escape and F11 keyboard shortcuts. -->
-    <Button x:Name="ExitFullscreenButton" Grid.Row="1" ZIndex="100"
-            Classes="ghost" Content="Exit fullscreen   Esc" IsVisible="False"
-            HorizontalAlignment="Right" VerticalAlignment="Top" Margin="0,16,16,0"
-            AutomationProperties.Name="Exit fullscreen"
-            AutomationProperties.HelpText="Leave fullscreen with this button, Escape, or F11."
-            AutomationProperties.AutomationId="ExitFullscreenButton" />
   </Grid>
 </Window>

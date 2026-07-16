@@ -60,7 +60,7 @@ SPDX-License-Identifier: GPL-2.0-or-later
 ## Components
 
 - Existing components to reuse: Avalonia Fluent controls, card and pill styles, library tile `ListBox`, native `TabControl`, launch bar, and console panel. Button and toggle-button content stays centered on both axes across every workspace.
-- New/changed components: Desktop title/menu chrome, compact command toolbar, clear active workspace treatment, settings category rail, a Controller/Keyboard segmented mode switch, controller/keyboard binding rows, a transparent controller reference image, reset-to-defaults action, consistent control heights, visible focus rings, accessible search/toolbar metadata, improved empty state, larger artwork grid, a visually distinct selected-game inspector, and a fullscreen exit overlay.
+- New/changed components: Desktop title/menu chrome, compact command toolbar, clear active workspace treatment, settings category rail, a Controller/Keyboard segmented mode switch, controller/keyboard binding rows, a transparent controller reference image, reset-to-defaults action, consistent control heights, visible focus rings, accessible search/toolbar metadata, improved empty state, larger artwork grid, a visually distinct selected-game inspector, and a high-visibility fullscreen exit beside the workspace controls.
 - Variants and states: Default, pointer-over, pressed, keyboard-focus, selected/checked, disabled, loading, empty, error, running, and stopped.
 - Token/component ownership: Shared color, typography, shape, control-size, and state tokens live in `App.axaml`; page composition remains in `MainWindow.axaml`.
 
