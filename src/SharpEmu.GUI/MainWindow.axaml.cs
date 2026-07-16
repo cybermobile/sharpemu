@@ -486,6 +486,7 @@ public partial class MainWindow : Window
         KeyboardInputModeButton.Content = loc.Get("Input.Device.Keyboard");
         ControllerDiagramTitle.Text = loc.Get("Input.ControllerDiagram.Title");
         ControllerDiagramDescription.Text = loc.Get("Input.ControllerDiagram.Desc");
+        AutomationProperties.SetName(ControllerImage, loc.Get("Input.ControllerDiagram.Alt"));
         ControllerBindingsTitle.Text = loc.Get("Input.Controller.Title");
         ControllerBindingsDescription.Text = loc.Get("Input.Controller.Desc");
         StickSettingsTitle.Text = loc.Get("Input.Sticks.Title");
