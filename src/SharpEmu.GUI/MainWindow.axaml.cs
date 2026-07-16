@@ -161,6 +161,8 @@ public partial class MainWindow : Window
         EnvLogNpToggle.IsCheckedChanged += (_, _) =>
             SetEnvironmentToggle("SHARPEMU_LOG_NP", EnvLogNpToggle.IsChecked == true);
         ResetInputMappingsButton.Click += (_, _) => ResetInputMappings();
+        ControllerInputModeButton.Click += (_, _) => SetInputMode(showKeyboard: false);
+        KeyboardInputModeButton.Click += (_, _) => SetInputMode(showKeyboard: true);
         StickDeadzoneBox.ValueChanged += (_, _) => UpdateInputProfile(profile =>
             profile.StickDeadzone = (int)(StickDeadzoneBox.Value ?? 10));
         SwapSticksToggle.IsCheckedChanged += (_, _) => UpdateInputProfile(profile =>
@@ -246,6 +248,16 @@ public partial class MainWindow : Window
         {
             button.Classes.Remove("active");
         }
+    }
+
+    private void SetInputMode(bool showKeyboard)
+    {
+        ControllerInputPanel.IsVisible = !showKeyboard;
+        KeyboardInputPanel.IsVisible = showKeyboard;
+        ControllerInputModeButton.IsChecked = !showKeyboard;
+        KeyboardInputModeButton.IsChecked = showKeyboard;
+        SetActiveClass(ControllerInputModeButton, !showKeyboard);
+        SetActiveClass(KeyboardInputModeButton, showKeyboard);
     }
 
     // ---- Controller navigation ----
@@ -469,6 +481,11 @@ public partial class MainWindow : Window
         ControlsPageTitle.Text = loc.Get("Input.Title");
         ControlsPageDescription.Text = loc.Get("Input.Description");
         ResetInputMappingsButton.Content = loc.Get("Input.Reset");
+        InputDeviceModeLabel.Text = loc.Get("Input.Device.Title");
+        ControllerInputModeButton.Content = loc.Get("Input.Device.Controller");
+        KeyboardInputModeButton.Content = loc.Get("Input.Device.Keyboard");
+        ControllerDiagramTitle.Text = loc.Get("Input.ControllerDiagram.Title");
+        ControllerDiagramDescription.Text = loc.Get("Input.ControllerDiagram.Desc");
         ControllerBindingsTitle.Text = loc.Get("Input.Controller.Title");
         ControllerBindingsDescription.Text = loc.Get("Input.Controller.Desc");
         StickSettingsTitle.Text = loc.Get("Input.Sticks.Title");
@@ -596,6 +613,14 @@ public partial class MainWindow : Window
         SetAccessibility(LanguageBox, LanguageLabel, LanguageDesc);
         SetAccessibility(TitleMusicToggle, TitleMusicLabel, TitleMusicDesc);
         SetAccessibility(DiscordToggle, DiscordLabel, DiscordDesc);
+        SetAccessibility(
+            ControllerInputModeButton,
+            ControllerInputModeButton.Content?.ToString() ?? string.Empty,
+            Localization.Instance.Get("Input.Device.Controller.Help"));
+        SetAccessibility(
+            KeyboardInputModeButton,
+            KeyboardInputModeButton.Content?.ToString() ?? string.Empty,
+            Localization.Instance.Get("Input.Device.Keyboard.Help"));
         SetAccessibility(StickDeadzoneBox, StickDeadzoneLabel, StickDeadzoneDescription);
         SetAccessibility(SwapSticksToggle, SwapSticksLabel.Text, ControlsPageDescription.Text);
         SetAccessibility(InvertLeftXToggle, InvertLeftXLabel.Text, ControlsPageDescription.Text);

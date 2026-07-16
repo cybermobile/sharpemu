@@ -471,83 +471,185 @@ SPDX-License-Identifier: GPL-2.0-or-later
 
                   <Border Classes="card">
                     <StackPanel Spacing="10">
-                      <TextBlock x:Name="ControllerBindingsTitle" Classes="sectionTitle"
-                                 Text="CONTROLLER BUTTONS" />
-                      <TextBlock x:Name="ControllerBindingsDescription"
-                                 Text="Choose which physical control drives each PlayStation button."
-                                 FontSize="11" Foreground="{StaticResource MutedBrush}" TextWrapping="Wrap" />
-                      <ItemsControl x:Name="ControllerBindingList"
-                                    ItemTemplate="{StaticResource InputBindingRowTemplate}"
-                                    ItemsPanel="{StaticResource InputBindingPanelTemplate}" />
+                      <TextBlock x:Name="InputDeviceModeLabel" Classes="sectionTitle"
+                                 Text="CHOOSE INPUT DEVICE" />
+                      <StackPanel Orientation="Horizontal" Spacing="8">
+                        <ToggleButton x:Name="ControllerInputModeButton" Classes="toolbarNav active"
+                                      Content="Controller" IsChecked="True"
+                                      AutomationProperties.AutomationId="ControllerInputModeButton" />
+                        <ToggleButton x:Name="KeyboardInputModeButton" Classes="toolbarNav"
+                                      Content="Keyboard"
+                                      AutomationProperties.AutomationId="KeyboardInputModeButton" />
+                      </StackPanel>
                     </StackPanel>
                   </Border>
 
-                  <Border Classes="card">
-                    <StackPanel Spacing="14">
-                      <TextBlock x:Name="StickSettingsTitle" Classes="sectionTitle" Text="STICKS" />
-                      <Grid ColumnDefinitions="*,Auto">
-                        <StackPanel Spacing="2" Margin="0,0,16,0">
-                          <TextBlock x:Name="StickDeadzoneLabel" Text="Stick deadzone" FontSize="13" />
-                          <TextBlock x:Name="StickDeadzoneDescription"
-                                     Text="Ignore small movement around the center position (0–64)."
-                                     FontSize="11" Foreground="{StaticResource MutedBrush}" TextWrapping="Wrap" />
-                        </StackPanel>
-                        <NumericUpDown x:Name="StickDeadzoneBox" Grid.Column="1" Width="160"
-                                       Minimum="0" Maximum="64" Increment="1" FormatString="0" />
-                      </Grid>
-                      <Grid ColumnDefinitions="*,Auto">
-                        <TextBlock x:Name="SwapSticksLabel" Text="Swap left and right sticks" FontSize="13"
-                                   VerticalAlignment="Center" />
-                        <ToggleSwitch x:Name="SwapSticksToggle" Grid.Column="1" OnContent="On" OffContent="Off" />
-                      </Grid>
-                      <Grid ColumnDefinitions="*,Auto">
-                        <TextBlock x:Name="InvertLeftXLabel" Text="Invert left stick X" FontSize="13"
-                                   VerticalAlignment="Center" />
-                        <ToggleSwitch x:Name="InvertLeftXToggle" Grid.Column="1" OnContent="On" OffContent="Off" />
-                      </Grid>
-                      <Grid ColumnDefinitions="*,Auto">
-                        <TextBlock x:Name="InvertLeftYLabel" Text="Invert left stick Y" FontSize="13"
-                                   VerticalAlignment="Center" />
-                        <ToggleSwitch x:Name="InvertLeftYToggle" Grid.Column="1" OnContent="On" OffContent="Off" />
-                      </Grid>
-                      <Grid ColumnDefinitions="*,Auto">
-                        <TextBlock x:Name="InvertRightXLabel" Text="Invert right stick X" FontSize="13"
-                                   VerticalAlignment="Center" />
-                        <ToggleSwitch x:Name="InvertRightXToggle" Grid.Column="1" OnContent="On" OffContent="Off" />
-                      </Grid>
-                      <Grid ColumnDefinitions="*,Auto">
-                        <TextBlock x:Name="InvertRightYLabel" Text="Invert right stick Y" FontSize="13"
-                                   VerticalAlignment="Center" />
-                        <ToggleSwitch x:Name="InvertRightYToggle" Grid.Column="1" OnContent="On" OffContent="Off" />
-                      </Grid>
-                    </StackPanel>
-                  </Border>
+                  <StackPanel x:Name="ControllerInputPanel" Spacing="16">
+                    <Border Classes="card">
+                      <StackPanel Spacing="10">
+                        <TextBlock x:Name="ControllerDiagramTitle" Classes="sectionTitle"
+                                   Text="DUALSENSE LAYOUT" />
+                        <TextBlock x:Name="ControllerDiagramDescription"
+                                   Text="Use the diagram to locate each control, then choose its mapping below."
+                                   FontSize="11" Foreground="{StaticResource MutedBrush}" TextWrapping="Wrap" />
+                        <Viewbox Stretch="Uniform" MaxHeight="300" HorizontalAlignment="Stretch"
+                                 AutomationProperties.AccessibilityView="Raw">
+                          <Canvas Width="760" Height="330">
+                            <!-- Original, theme-aware controller schematic. The labeled mapping list below
+                                 remains the canonical accessible setup surface. -->
+                            <Path Data="M 164,70 C 220,34 540,34 596,70 C 651,106 690,235 639,291 C 612,321 576,298 542,238 L 493,151 C 460,101 300,101 267,151 L 218,238 C 184,298 148,321 121,291 C 70,235 109,106 164,70 Z"
+                                  Fill="#E3E7EF" Stroke="#8D96A8" StrokeThickness="4" />
+                            <Path Data="M 164,70 C 135,93 119,126 110,164 M 596,70 C 625,93 641,126 650,164"
+                                  Stroke="#B9C0CE" StrokeThickness="8" StrokeLineCap="Round" />
 
-                  <Border Classes="card">
-                    <StackPanel Spacing="10">
-                      <TextBlock x:Name="KeyboardBindingsTitle" Classes="sectionTitle"
-                                 Text="KEYBOARD BUTTONS" />
-                      <TextBlock x:Name="KeyboardBindingsDescription"
-                                 Text="Assign a primary keyboard key to each PlayStation button. Choose Unbound to disable it."
-                                 FontSize="11" Foreground="{StaticResource MutedBrush}" TextWrapping="Wrap" />
-                      <ItemsControl x:Name="KeyboardBindingList"
-                                    ItemTemplate="{StaticResource InputBindingRowTemplate}"
-                                    ItemsPanel="{StaticResource InputBindingPanelTemplate}" />
-                    </StackPanel>
-                  </Border>
+                            <Border Canvas.Left="154" Canvas.Top="45" Width="104" Height="30"
+                                    CornerRadius="11,11,4,4" Background="#343A48" />
+                            <Border Canvas.Left="502" Canvas.Top="45" Width="104" Height="30"
+                                    CornerRadius="11,11,4,4" Background="#343A48" />
+                            <Border Canvas.Left="178" Canvas.Top="76" Width="88" Height="22"
+                                    CornerRadius="7" Background="#636C7D" />
+                            <Border Canvas.Left="494" Canvas.Top="76" Width="88" Height="22"
+                                    CornerRadius="7" Background="#636C7D" />
+                            <TextBlock Canvas.Left="188" Canvas.Top="49" Text="L2" Foreground="White"
+                                       FontSize="13" FontWeight="SemiBold" />
+                            <TextBlock Canvas.Left="544" Canvas.Top="49" Text="R2" Foreground="White"
+                                       FontSize="13" FontWeight="SemiBold" />
+                            <TextBlock Canvas.Left="204" Canvas.Top="77" Text="L1" Foreground="White"
+                                       FontSize="11" FontWeight="SemiBold" />
+                            <TextBlock Canvas.Left="530" Canvas.Top="77" Text="R1" Foreground="White"
+                                       FontSize="11" FontWeight="SemiBold" />
 
-                  <Border Classes="card">
-                    <StackPanel Spacing="10">
-                      <TextBlock x:Name="KeyboardSticksTitle" Classes="sectionTitle"
-                                 Text="KEYBOARD STICKS" />
-                      <TextBlock x:Name="KeyboardSticksDescription"
-                                 Text="Assign the negative and positive directions for both analog sticks."
-                                 FontSize="11" Foreground="{StaticResource MutedBrush}" TextWrapping="Wrap" />
-                      <ItemsControl x:Name="KeyboardAxisBindingList"
-                                    ItemTemplate="{StaticResource InputBindingRowTemplate}"
-                                    ItemsPanel="{StaticResource InputBindingPanelTemplate}" />
-                    </StackPanel>
-                  </Border>
+                            <Border Canvas.Left="300" Canvas.Top="78" Width="160" Height="82"
+                                    CornerRadius="12" Background="#454D5C" BorderBrush="#697386"
+                                    BorderThickness="2" />
+                            <TextBlock Canvas.Left="346" Canvas.Top="107" Text="TOUCHPAD" Foreground="#DCE1EA"
+                                       FontSize="11" FontWeight="SemiBold" />
+                            <Border Canvas.Left="274" Canvas.Top="118" Width="18" Height="7"
+                                    CornerRadius="4" Background="#555E6F" />
+                            <Border Canvas.Left="468" Canvas.Top="118" Width="18" Height="7"
+                                    CornerRadius="4" Background="#555E6F" />
+
+                            <Border Canvas.Left="204" Canvas.Top="135" Width="88" Height="88"
+                                    CornerRadius="44" Background="#D0D5DF" />
+                            <Border Canvas.Left="237" Canvas.Top="145" Width="22" Height="68"
+                                    CornerRadius="4" Background="#343A48" />
+                            <Border Canvas.Left="214" Canvas.Top="168" Width="68" Height="22"
+                                    CornerRadius="4" Background="#343A48" />
+
+                            <Border Canvas.Left="492" Canvas.Top="135" Width="88" Height="88"
+                                    CornerRadius="44" Background="#D0D5DF" />
+                            <Ellipse Canvas.Left="524" Canvas.Top="142" Width="24" Height="24"
+                                     Fill="#596273" Stroke="#58D39B" StrokeThickness="2" />
+                            <Ellipse Canvas.Left="548" Canvas.Top="166" Width="24" Height="24"
+                                     Fill="#596273" Stroke="#E6717B" StrokeThickness="2" />
+                            <Ellipse Canvas.Left="524" Canvas.Top="190" Width="24" Height="24"
+                                     Fill="#596273" Stroke="#6FA8FF" StrokeThickness="2" />
+                            <Ellipse Canvas.Left="500" Canvas.Top="166" Width="24" Height="24"
+                                     Fill="#596273" Stroke="#D58BE8" StrokeThickness="2" />
+                            <TextBlock Canvas.Left="529" Canvas.Top="143" Text="△" Foreground="#F5F7FB" FontSize="14" />
+                            <TextBlock Canvas.Left="553" Canvas.Top="167" Text="○" Foreground="#F5F7FB" FontSize="14" />
+                            <TextBlock Canvas.Left="529" Canvas.Top="191" Text="×" Foreground="#F5F7FB" FontSize="14" />
+                            <TextBlock Canvas.Left="505" Canvas.Top="167" Text="□" Foreground="#F5F7FB" FontSize="14" />
+
+                            <Ellipse Canvas.Left="287" Canvas.Top="204" Width="72" Height="72"
+                                     Fill="#2E3440" Stroke="#7B8495" StrokeThickness="5" />
+                            <Ellipse Canvas.Left="401" Canvas.Top="204" Width="72" Height="72"
+                                     Fill="#2E3440" Stroke="#7B8495" StrokeThickness="5" />
+                            <Ellipse Canvas.Left="303" Canvas.Top="220" Width="40" Height="40" Fill="#4C5566" />
+                            <Ellipse Canvas.Left="417" Canvas.Top="220" Width="40" Height="40" Fill="#4C5566" />
+                            <TextBlock Canvas.Left="315" Canvas.Top="231" Text="L3" Foreground="#F5F7FB"
+                                       FontSize="11" FontWeight="SemiBold" />
+                            <TextBlock Canvas.Left="429" Canvas.Top="231" Text="R3" Foreground="#F5F7FB"
+                                       FontSize="11" FontWeight="SemiBold" />
+                            <Ellipse Canvas.Left="368" Canvas.Top="184" Width="24" Height="24"
+                                     Fill="#485164" Stroke="#768095" StrokeThickness="2" />
+                          </Canvas>
+                        </Viewbox>
+                      </StackPanel>
+                    </Border>
+
+                    <Border Classes="card">
+                      <StackPanel Spacing="10">
+                        <TextBlock x:Name="ControllerBindingsTitle" Classes="sectionTitle"
+                                   Text="CONTROLLER BUTTONS" />
+                        <TextBlock x:Name="ControllerBindingsDescription"
+                                   Text="Choose which physical control drives each PlayStation button."
+                                   FontSize="11" Foreground="{StaticResource MutedBrush}" TextWrapping="Wrap" />
+                        <ItemsControl x:Name="ControllerBindingList"
+                                      ItemTemplate="{StaticResource InputBindingRowTemplate}"
+                                      ItemsPanel="{StaticResource InputBindingPanelTemplate}" />
+                      </StackPanel>
+                    </Border>
+
+                    <Border Classes="card">
+                      <StackPanel Spacing="14">
+                        <TextBlock x:Name="StickSettingsTitle" Classes="sectionTitle" Text="STICKS" />
+                        <Grid ColumnDefinitions="*,Auto">
+                          <StackPanel Spacing="2" Margin="0,0,16,0">
+                            <TextBlock x:Name="StickDeadzoneLabel" Text="Stick deadzone" FontSize="13" />
+                            <TextBlock x:Name="StickDeadzoneDescription"
+                                       Text="Ignore small movement around the center position (0–64)."
+                                       FontSize="11" Foreground="{StaticResource MutedBrush}" TextWrapping="Wrap" />
+                          </StackPanel>
+                          <NumericUpDown x:Name="StickDeadzoneBox" Grid.Column="1" Width="160"
+                                         Minimum="0" Maximum="64" Increment="1" FormatString="0" />
+                        </Grid>
+                        <Grid ColumnDefinitions="*,Auto">
+                          <TextBlock x:Name="SwapSticksLabel" Text="Swap left and right sticks" FontSize="13"
+                                     VerticalAlignment="Center" />
+                          <ToggleSwitch x:Name="SwapSticksToggle" Grid.Column="1" OnContent="On" OffContent="Off" />
+                        </Grid>
+                        <Grid ColumnDefinitions="*,Auto">
+                          <TextBlock x:Name="InvertLeftXLabel" Text="Invert left stick X" FontSize="13"
+                                     VerticalAlignment="Center" />
+                          <ToggleSwitch x:Name="InvertLeftXToggle" Grid.Column="1" OnContent="On" OffContent="Off" />
+                        </Grid>
+                        <Grid ColumnDefinitions="*,Auto">
+                          <TextBlock x:Name="InvertLeftYLabel" Text="Invert left stick Y" FontSize="13"
+                                     VerticalAlignment="Center" />
+                          <ToggleSwitch x:Name="InvertLeftYToggle" Grid.Column="1" OnContent="On" OffContent="Off" />
+                        </Grid>
+                        <Grid ColumnDefinitions="*,Auto">
+                          <TextBlock x:Name="InvertRightXLabel" Text="Invert right stick X" FontSize="13"
+                                     VerticalAlignment="Center" />
+                          <ToggleSwitch x:Name="InvertRightXToggle" Grid.Column="1" OnContent="On" OffContent="Off" />
+                        </Grid>
+                        <Grid ColumnDefinitions="*,Auto">
+                          <TextBlock x:Name="InvertRightYLabel" Text="Invert right stick Y" FontSize="13"
+                                     VerticalAlignment="Center" />
+                          <ToggleSwitch x:Name="InvertRightYToggle" Grid.Column="1" OnContent="On" OffContent="Off" />
+                        </Grid>
+                      </StackPanel>
+                    </Border>
+                  </StackPanel>
+
+                  <StackPanel x:Name="KeyboardInputPanel" Spacing="16" IsVisible="False">
+                    <Border Classes="card">
+                      <StackPanel Spacing="10">
+                        <TextBlock x:Name="KeyboardBindingsTitle" Classes="sectionTitle"
+                                   Text="KEYBOARD BUTTONS" />
+                        <TextBlock x:Name="KeyboardBindingsDescription"
+                                   Text="Assign a primary keyboard key to each PlayStation button. Choose Unbound to disable it."
+                                   FontSize="11" Foreground="{StaticResource MutedBrush}" TextWrapping="Wrap" />
+                        <ItemsControl x:Name="KeyboardBindingList"
+                                      ItemTemplate="{StaticResource InputBindingRowTemplate}"
+                                      ItemsPanel="{StaticResource InputBindingPanelTemplate}" />
+                      </StackPanel>
+                    </Border>
+
+                    <Border Classes="card">
+                      <StackPanel Spacing="10">
+                        <TextBlock x:Name="KeyboardSticksTitle" Classes="sectionTitle"
+                                   Text="KEYBOARD STICKS" />
+                        <TextBlock x:Name="KeyboardSticksDescription"
+                                   Text="Assign the negative and positive directions for both analog sticks."
+                                   FontSize="11" Foreground="{StaticResource MutedBrush}" TextWrapping="Wrap" />
+                        <ItemsControl x:Name="KeyboardAxisBindingList"
+                                      ItemTemplate="{StaticResource InputBindingRowTemplate}"
+                                      ItemsPanel="{StaticResource InputBindingPanelTemplate}" />
+                      </StackPanel>
+                    </Border>
+                  </StackPanel>
                 </StackPanel>
               </ScrollViewer>
             </TabItem>
