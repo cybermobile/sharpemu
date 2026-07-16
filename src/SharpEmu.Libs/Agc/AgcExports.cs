@@ -558,6 +558,9 @@ public static partial class AgcExports
         public uint DefaultOwner { get; set; } = DefaultAgcOwner;
         public uint NextOwner { get; set; } = 1;
         public uint NextResource { get; set; } = 1;
+        public ulong TfRingAddress { get; set; }
+        public uint HsOffchipRing { get; set; }
+        public uint HsOffchipParam { get; set; }
         public ulong WorkSequence { get; set; }
         public ulong SubmissionSequence { get; set; }
         public bool WaitMonitorRunning { get; set; }
@@ -2634,6 +2637,67 @@ public static partial class AgcExports
 
         TraceAgc($"agc.driver_delete_eq_event eq=0x{equeue:X16} id=0x{eventId:X16}");
         return SetReturn(ctx, OrbisGen2Result.ORBIS_GEN2_OK);
+    }
+
+    [SysAbiExport(
+        Nid = "XlNp7jzGiPo",
+        ExportName = "sceAgcDriverSetTFRing",
+        Target = Generation.Gen5,
+        LibraryName = "libSceAgcDriver")]
+    public static int DriverSetTfRing(CpuContext ctx)
+    {
+        var address = ctx[CpuRegister.Rdi];
+        if (address == 0)
+        {
+            return SetReturn(ctx, OrbisGen2Result.ORBIS_GEN2_ERROR_INVALID_ARGUMENT);
+        }
+
+        var gpuState = _submittedGpuStates.GetValue(ctx.Memory, static _ => new SubmittedGpuState());
+        lock (gpuState.Gate)
+        {
+            gpuState.TfRingAddress = address;
+        }
+
+        TraceAgc($"agc.driver_set_tf_ring address=0x{address:X16}");
+        return SetReturn(ctx, OrbisGen2Result.ORBIS_GEN2_OK);
+    }
+
+    internal static ulong GetTfRingAddressForTests(object memory)
+    {
+        var gpuState = _submittedGpuStates.GetValue(memory, static _ => new SubmittedGpuState());
+        lock (gpuState.Gate)
+        {
+            return gpuState.TfRingAddress;
+        }
+    }
+
+    [SysAbiExport(
+        Nid = "MM4IZSEYytQ",
+        ExportName = "sceAgcDriverSetHsOffchipParam",
+        Target = Generation.Gen5,
+        LibraryName = "libSceAgcDriver")]
+    public static int DriverSetHsOffchipParam(CpuContext ctx)
+    {
+        var ring = (uint)ctx[CpuRegister.Rdi];
+        var parameter = (uint)ctx[CpuRegister.Rsi];
+        var gpuState = _submittedGpuStates.GetValue(ctx.Memory, static _ => new SubmittedGpuState());
+        lock (gpuState.Gate)
+        {
+            gpuState.HsOffchipRing = ring;
+            gpuState.HsOffchipParam = parameter;
+        }
+
+        TraceAgc($"agc.driver_set_hs_offchip_param ring={ring} parameter=0x{parameter:X8}");
+        return SetReturn(ctx, OrbisGen2Result.ORBIS_GEN2_OK);
+    }
+
+    internal static (uint Ring, uint Parameter) GetHsOffchipParamForTests(object memory)
+    {
+        var gpuState = _submittedGpuStates.GetValue(memory, static _ => new SubmittedGpuState());
+        lock (gpuState.Gate)
+        {
+            return (gpuState.HsOffchipRing, gpuState.HsOffchipParam);
+        }
     }
 
     [SysAbiExport(
