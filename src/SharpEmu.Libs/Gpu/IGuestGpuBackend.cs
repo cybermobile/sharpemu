@@ -158,7 +158,8 @@ internal interface IGuestGpuBackend
 
     /// <summary>
     /// Enqueues a ranged GDS read after prior work on the active guest queue.
-    /// The completion callback runs on the backend's guest-work thread.
+    /// The completion callback runs inline on the backend's render loop, so it
+    /// must not block; exceptions it throws are logged and swallowed.
     /// Returns zero when no presenter queue is available.
     /// </summary>
     long SubmitGdsRead(

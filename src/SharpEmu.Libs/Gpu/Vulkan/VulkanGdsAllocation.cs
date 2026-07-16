@@ -37,6 +37,7 @@ internal sealed unsafe class VulkanGdsAllocation : IGdsStorageAllocation
     public void ClearDwords(uint offsetDwords, uint countDwords, uint value)
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
+        ThrowIfInvalidRange(offsetDwords, countDwords);
         new Span<uint>(
             (void*)(Mapped + checked((nint)((ulong)offsetDwords * sizeof(uint)))),
             checked((int)countDwords)).Fill(value);
@@ -45,9 +46,23 @@ internal sealed unsafe class VulkanGdsAllocation : IGdsStorageAllocation
     public void ReadDwords(uint offsetDwords, Span<uint> destination)
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
+        ThrowIfInvalidRange(offsetDwords, (uint)destination.Length);
         new ReadOnlySpan<uint>(
             (void*)(Mapped + checked((nint)((ulong)offsetDwords * sizeof(uint)))),
             destination.Length).CopyTo(destination);
+    }
+
+    // These wrap raw pointer access to persistently mapped memory, so an invalid
+    // range must fail here even though callers validate first.
+    private static void ThrowIfInvalidRange(uint offsetDwords, uint countDwords)
+    {
+        if (!GuestGpuGds.IsValidDwordRange(offsetDwords, countDwords))
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(countDwords),
+                $"GDS range {offsetDwords}+{countDwords} exceeds " +
+                $"{GuestGpuGds.DwordCount} dwords.");
+        }
     }
 
     public void Dispose()

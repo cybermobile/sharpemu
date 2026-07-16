@@ -143,6 +143,7 @@ public enum SpirvOp : ushort
     ControlBarrier = 224,
     MemoryBarrier = 225,
     AtomicIAdd = 234,
+    AtomicISub = 235,
     AtomicUMax = 239,
     Phi = 245,
     LoopMerge = 246,

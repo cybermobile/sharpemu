@@ -72,7 +72,8 @@ internal sealed record VulkanComputeGuestDispatch(
     bool WritesGlobalMemory,
     uint ThreadCountX = uint.MaxValue,
     uint ThreadCountY = uint.MaxValue,
-    uint ThreadCountZ = uint.MaxValue);
+    uint ThreadCountZ = uint.MaxValue,
+    bool UsesGds = false);
 
 internal sealed record VulkanOrderedGuestAction(
     Action Action,
@@ -280,6 +281,8 @@ internal static unsafe class VulkanVideoPresenter
     private static bool _closed;
     private static bool _presenterCloseRequested;
     private const string DebugUtilsExtensionName = "VK_EXT_debug_utils";
+    private const string SubgroupSizeControlExtensionName =
+        "VK_EXT_subgroup_size_control";
     private const uint NvidiaVendorId = 0x10DE;
     private const string PortabilityEnumerationExtensionName = "VK_KHR_portability_enumeration";
     private const string PortabilitySubsetExtensionName = "VK_KHR_portability_subset";
@@ -928,14 +931,16 @@ internal static unsafe class VulkanVideoPresenter
         bool writesGlobalMemory,
         uint threadCountX = uint.MaxValue,
         uint threadCountY = uint.MaxValue,
-        uint threadCountZ = uint.MaxValue)
+        uint threadCountZ = uint.MaxValue,
+        bool usesGds = false)
     {
         if (computeSpirv.Length == 0 ||
             groupCountX == 0 ||
             groupCountY == 0 ||
             groupCountZ == 0 ||
             textures.All(texture => !texture.IsStorage) &&
-            !writesGlobalMemory)
+            !writesGlobalMemory &&
+            !usesGds)
         {
             return 0;
         }
@@ -967,7 +972,8 @@ internal static unsafe class VulkanVideoPresenter
                     writesGlobalMemory,
                     threadCountX,
                     threadCountY,
-                    threadCountZ));
+                    threadCountZ,
+                    usesGds));
             foreach (var key in GetStorageImageUploadKeys(textures))
             {
                 _pendingGuestImageUploads[key] =
@@ -2233,6 +2239,45 @@ internal static unsafe class VulkanVideoPresenter
         return keys;
     }
 
+    internal static int GetGlobalBufferResourceCount(
+        int ordinaryBufferCount,
+        bool usesGds) =>
+        checked(ordinaryBufferCount + (usesGds ? 1 : 0));
+
+    internal static uint GetRequiredComputeSubgroupSize(
+        bool usesGds,
+        uint defaultSubgroupSize,
+        bool canRequireSize32,
+        bool supportsGdsSubgroupOperations = true)
+    {
+        if (!usesGds)
+        {
+            return 0;
+        }
+
+        if (!supportsGdsSubgroupOperations)
+        {
+            throw new NotSupportedException(
+                "GDS compute shaders require Vulkan compute-stage subgroup " +
+                "basic and ballot operations.");
+        }
+
+        if (defaultSubgroupSize == 32)
+        {
+            return 0;
+        }
+
+        if (canRequireSize32)
+        {
+            return 32;
+        }
+
+        throw new NotSupportedException(
+            "GDS compute shaders require a 32-lane Vulkan subgroup; " +
+            $"the selected device defaults to {defaultSubgroupSize} lanes " +
+            "and cannot request subgroup size 32.");
+    }
+
     private readonly record struct Presentation(
         byte[]? Pixels,
         uint Width,
@@ -2275,6 +2320,11 @@ internal static unsafe class VulkanVideoPresenter
         private uint _maxComputeWorkGroupInvocations;
         private ulong _minStorageBufferOffsetAlignment = 1;
         private bool _supportsIndependentBlend;
+        private uint _defaultSubgroupSize;
+        private bool _supportsComputeGdsSubgroupOperations;
+        private bool _subgroupSizeControlExtensionAvailable;
+        private bool _subgroupSize32PropertiesSupported;
+        private bool _supportsRequiredSubgroupSize32;
         private uint _maxColorAttachments;
         private Device _device;
         private PipelineCache _pipelineCache;
@@ -2507,6 +2557,7 @@ internal static unsafe class VulkanVideoPresenter
             public GuestRasterState Raster = GuestRasterState.Default;
             public GuestDepthState Depth = GuestDepthState.Default;
             public bool HasDepthAttachment;
+            public bool UsesGds;
             // Layout keys are needed twice per draw (pipeline lookup and
             // descriptor-layout lookup); cache the built strings.
             public string? ResourceLayoutKey;
@@ -3206,6 +3257,8 @@ internal static unsafe class VulkanVideoPresenter
         private void LoadComputeDeviceLimits()
         {
             _vk.GetPhysicalDeviceProperties(_physicalDevice, out var properties);
+            _subgroupSizeControlExtensionAvailable =
+                IsDeviceExtensionAvailable(SubgroupSizeControlExtensionName);
             var subgroupSizeControl = new PhysicalDeviceSubgroupSizeControlProperties
             {
                 SType = StructureType.PhysicalDeviceSubgroupSizeControlProperties,
@@ -3213,7 +3266,9 @@ internal static unsafe class VulkanVideoPresenter
             var subgroup = new PhysicalDeviceSubgroupProperties
             {
                 SType = StructureType.PhysicalDeviceSubgroupProperties,
-                PNext = &subgroupSizeControl,
+                PNext = _subgroupSizeControlExtensionAvailable
+                    ? &subgroupSizeControl
+                    : null,
             };
             var properties2 = new PhysicalDeviceProperties2
             {
@@ -3228,6 +3283,16 @@ internal static unsafe class VulkanVideoPresenter
             _maxComputeWorkGroupSizeY = properties.Limits.MaxComputeWorkGroupSize[1];
             _maxComputeWorkGroupSizeZ = properties.Limits.MaxComputeWorkGroupSize[2];
             _maxComputeWorkGroupInvocations = properties.Limits.MaxComputeWorkGroupInvocations;
+            _defaultSubgroupSize = subgroup.SubgroupSize;
+            _supportsComputeGdsSubgroupOperations =
+                (subgroup.SupportedStages & ShaderStageFlags.ComputeBit) != 0 &&
+                (subgroup.SupportedOperations & SubgroupFeatureFlags.BasicBit) != 0 &&
+                (subgroup.SupportedOperations & SubgroupFeatureFlags.BallotBit) != 0;
+            _subgroupSize32PropertiesSupported =
+                subgroupSizeControl.MinSubgroupSize <= 32 &&
+                subgroupSizeControl.MaxSubgroupSize >= 32 &&
+                (subgroupSizeControl.RequiredSubgroupSizeStages &
+                    ShaderStageFlags.ComputeBit) != 0;
             _minStorageBufferOffsetAlignment = Math.Max(
                 properties.Limits.MinStorageBufferOffsetAlignment,
                 1UL);
@@ -3326,10 +3391,18 @@ internal static unsafe class VulkanVideoPresenter
                 SType = StructureType.PhysicalDeviceRobustness2FeaturesExt,
                 PNext = &maintenance8Features,
             };
+            var subgroupSizeControlFeatures =
+                new PhysicalDeviceSubgroupSizeControlFeatures
+                {
+                    SType = StructureType.PhysicalDeviceSubgroupSizeControlFeatures,
+                    PNext = &robustness2Features,
+                };
             var featuresQuery = new PhysicalDeviceFeatures2
             {
                 SType = StructureType.PhysicalDeviceFeatures2,
-                PNext = &robustness2Features,
+                PNext = _subgroupSizeControlExtensionAvailable
+                    ? &subgroupSizeControlFeatures
+                    : &robustness2Features,
             };
             _vk.GetPhysicalDeviceFeatures2(_physicalDevice, &featuresQuery);
             var supportsMaintenance8 = maintenance8Features.Maintenance8;
@@ -3337,6 +3410,10 @@ internal static unsafe class VulkanVideoPresenter
             var supportsRobustImageAccess2 = robustness2Features.RobustImageAccess2;
             var supportsNullDescriptor = robustness2Features.NullDescriptor;
             var supportsRobustness2 = supportsRobustImageAccess2 || supportsNullDescriptor;
+            _supportsRequiredSubgroupSize32 =
+                _subgroupSize32PropertiesSupported &&
+                subgroupSizeControlFeatures.SubgroupSizeControl &&
+                _subgroupSizeControlExtensionAvailable;
             if (!supportsMaintenance8)
             {
                 Console.Error.WriteLine(
@@ -3354,10 +3431,12 @@ internal static unsafe class VulkanVideoPresenter
             var swapchainExtension = (byte*)SilkMarshal.StringToPtr("VK_KHR_swapchain");
             var maintenance8Extension = (byte*)SilkMarshal.StringToPtr("VK_KHR_maintenance8");
             var robustness2Extension = (byte*)SilkMarshal.StringToPtr("VK_EXT_robustness2");
+            var subgroupSizeControlExtension = (byte*)SilkMarshal.StringToPtr(
+                SubgroupSizeControlExtensionName);
             var portabilitySubsetExtension = (byte*)SilkMarshal.StringToPtr(PortabilitySubsetExtensionName);
             try
             {
-                var extensions = stackalloc byte*[4];
+                var extensions = stackalloc byte*[5];
                 var extensionCount = 0u;
                 extensions[extensionCount++] = swapchainExtension;
                 if (supportsMaintenance8)
@@ -3368,6 +3447,11 @@ internal static unsafe class VulkanVideoPresenter
                 if (supportsRobustness2)
                 {
                     extensions[extensionCount++] = robustness2Extension;
+                }
+
+                if (_supportsRequiredSubgroupSize32)
+                {
+                    extensions[extensionCount++] = subgroupSizeControlExtension;
                 }
 
                 if (IsDeviceExtensionAvailable(PortabilitySubsetExtensionName))
@@ -3384,12 +3468,20 @@ internal static unsafe class VulkanVideoPresenter
                 robustness2Features.RobustImageAccess2 = supportsRobustImageAccess2;
                 robustness2Features.NullDescriptor = supportsNullDescriptor;
                 robustness2Features.PNext = supportsMaintenance8 ? &maintenance8Features : null;
+                subgroupSizeControlFeatures.SubgroupSizeControl =
+                    _supportsRequiredSubgroupSize32;
+                subgroupSizeControlFeatures.ComputeFullSubgroups = false;
+                subgroupSizeControlFeatures.PNext = supportsRobustness2
+                    ? &robustness2Features
+                    : (supportsMaintenance8 ? &maintenance8Features : null);
                 var features2 = new PhysicalDeviceFeatures2
                 {
                     SType = StructureType.PhysicalDeviceFeatures2,
-                    PNext = supportsRobustness2
-                        ? &robustness2Features
-                        : (supportsMaintenance8 ? &maintenance8Features : null),
+                    PNext = _supportsRequiredSubgroupSize32
+                        ? &subgroupSizeControlFeatures
+                        : supportsRobustness2
+                            ? &robustness2Features
+                            : (supportsMaintenance8 ? &maintenance8Features : null),
                     Features = enabledFeatures,
                 };
                 var createInfo = new DeviceCreateInfo
@@ -3409,6 +3501,7 @@ internal static unsafe class VulkanVideoPresenter
                 SilkMarshal.Free((nint)swapchainExtension);
                 SilkMarshal.Free((nint)maintenance8Extension);
                 SilkMarshal.Free((nint)robustness2Extension);
+                SilkMarshal.Free((nint)subgroupSizeControlExtension);
                 SilkMarshal.Free((nint)portabilitySubsetExtension);
             }
 
@@ -4417,7 +4510,18 @@ internal static unsafe class VulkanVideoPresenter
                     $"{work.OffsetDwords}+{work.CountDwords}.");
             }
 
-            work.Completion(values);
+            try
+            {
+                work.Completion(values);
+            }
+            catch (Exception exception)
+            {
+                // The callback is caller-supplied code running on the render loop; a
+                // throw here must not take down presentation for every other queue.
+                Console.Error.WriteLine(
+                    $"[LOADER][WARN] GDS read completion threw: {exception}");
+            }
+
             TraceVulkanShader(
                 $"vk.gds_read queue={_activeGuestQueue.Name} " +
                 $"submission={_activeGuestQueue.SubmissionId} " +
@@ -5315,7 +5419,6 @@ internal static unsafe class VulkanVideoPresenter
                     resources.GlobalMemoryBuffers[index] =
                         CreateGlobalBufferResource(draw.GlobalMemoryBuffers[index]);
                 }
-
                 var sharedVertexResources = new Dictionary<
                     byte[], VertexBufferResource>(
                     System.Collections.Generic.ReferenceEqualityComparer.Instance);
@@ -5397,9 +5500,12 @@ internal static unsafe class VulkanVideoPresenter
             var resources = new TranslatedDrawResources
             {
                 DebugName = BuildComputeDebugName(dispatch),
+                UsesGds = dispatch.UsesGds,
                 Textures = new TextureResource[dispatch.Textures.Count],
                 GlobalMemoryBuffers =
-                    new GlobalBufferResource[dispatch.GlobalMemoryBuffers.Count],
+                    new GlobalBufferResource[GetGlobalBufferResourceCount(
+                        dispatch.GlobalMemoryBuffers.Count,
+                        dispatch.UsesGds)],
             };
 
             try
@@ -5453,6 +5559,10 @@ internal static unsafe class VulkanVideoPresenter
                 {
                     resources.GlobalMemoryBuffers[index] =
                         CreateGlobalBufferResource(dispatch.GlobalMemoryBuffers[index]);
+                }
+                if (dispatch.UsesGds)
+                {
+                    resources.GlobalMemoryBuffers[^1] = CreateGdsGlobalBufferResource();
                 }
 
                 if (traceResources)
@@ -5589,7 +5699,7 @@ internal static unsafe class VulkanVideoPresenter
                 genericPoolSizes[2] = new DescriptorPoolSize
                 {
                     Type = DescriptorType.StorageBuffer,
-                    DescriptorCount = 64,
+                    DescriptorCount = 256,
                 };
                 var poolInfo = new DescriptorPoolCreateInfo
                 {
@@ -6097,9 +6207,24 @@ internal static unsafe class VulkanVideoPresenter
             var entryPoint = (byte*)SilkMarshal.StringToPtr("main");
             try
             {
+                var requiredSubgroupSize = GetRequiredComputeSubgroupSize(
+                    resources.UsesGds,
+                    _defaultSubgroupSize,
+                    _supportsRequiredSubgroupSize32,
+                    _supportsComputeGdsSubgroupOperations);
+                var requiredSubgroup =
+                    new PipelineShaderStageRequiredSubgroupSizeCreateInfo
+                    {
+                        SType = StructureType
+                            .PipelineShaderStageRequiredSubgroupSizeCreateInfo,
+                        RequiredSubgroupSize = requiredSubgroupSize,
+                    };
                 var stage = new PipelineShaderStageCreateInfo
                 {
                     SType = StructureType.PipelineShaderStageCreateInfo,
+                    PNext = requiredSubgroupSize == 0
+                        ? null
+                        : &requiredSubgroup,
                     Stage = ShaderStageFlags.ComputeBit,
                     Module = computeModule,
                     PName = entryPoint,

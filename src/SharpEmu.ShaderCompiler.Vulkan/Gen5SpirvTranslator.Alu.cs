@@ -70,7 +70,7 @@ public static partial class Gen5SpirvTranslator
                             SpirvOp.GroupNonUniformBallot,
                             _uvec4Type,
                             UInt(3),
-                            Load(_boolType, _exec));
+                            LoadEffectiveExec());
                         var activeLow = _module.AddInstruction(
                             SpirvOp.CompositeExtract,
                             _uintType,
@@ -1196,7 +1196,7 @@ public static partial class Gen5SpirvTranslator
             var activeCondition = _module.AddInstruction(
                 SpirvOp.LogicalAnd,
                 _boolType,
-                Load(_boolType, _exec),
+                LoadEffectiveExec(),
                 condition);
             if (instruction.Control is Gen5DppControl compareDpp)
             {
@@ -1296,7 +1296,7 @@ public static partial class Gen5SpirvTranslator
             var left = GetRawSource(instruction, 0);
             if (instruction.Opcode.EndsWith("SaveexecB32", StringComparison.Ordinal))
             {
-                var oldExec64 = BooleanToWaveMask(Load(_boolType, _exec));
+                var oldExec64 = BooleanToWaveMask(LoadEffectiveExec());
                 var oldExec = _module.AddInstruction(
                     SpirvOp.UConvert,
                     _uintType,
@@ -1839,7 +1839,7 @@ public static partial class Gen5SpirvTranslator
             var left = GetRawSource64(instruction, 0);
             if (instruction.Opcode.EndsWith("SaveexecB64", StringComparison.Ordinal))
             {
-                var oldExec = BooleanToWaveMask(Load(_boolType, _exec));
+                var oldExec = BooleanToWaveMask(LoadEffectiveExec());
                 var notLeft = _module.AddInstruction(SpirvOp.Not, _ulongType, left);
                 var newExec = instruction.Opcode switch
                 {
@@ -2209,7 +2209,7 @@ public static partial class Gen5SpirvTranslator
                     _module.AddInstruction(
                         SpirvOp.Select,
                         _uintType,
-                        LogicalNot(SubgroupAny(Load(_boolType, _exec))),
+                        LogicalNot(SubgroupAny(LoadEffectiveExec())),
                         UInt(1),
                         UInt(0)),
                 Gen5OperandKind.EncodedConstant when operand.Value == 253 =>
@@ -2335,7 +2335,7 @@ public static partial class Gen5SpirvTranslator
             var activeWord = _module.AddInstruction(
                 SpirvOp.Select,
                 _uintType,
-                Load(_boolType, _exec),
+                LoadEffectiveExec(),
                 UInt(1),
                 UInt(0));
             var sourceActive = IsNotZero(
@@ -2377,7 +2377,7 @@ public static partial class Gen5SpirvTranslator
                 var activeWord = _module.AddInstruction(
                     SpirvOp.Select,
                     _uintType,
-                    Load(_boolType, _exec),
+                    LoadEffectiveExec(),
                     UInt(1),
                     UInt(0));
                 var shuffledActive = _module.AddInstruction(
@@ -3036,7 +3036,7 @@ public static partial class Gen5SpirvTranslator
                 () => Store(WaveBroadcastScratchPointer(), UInt(0)));
             EmitWave64Barrier();
 
-            var activeMask = BooleanToWaveMask(Load(_boolType, _exec));
+            var activeMask = BooleanToWaveMask(LoadEffectiveExec());
             var lowMask = _module.AddInstruction(
                 SpirvOp.UConvert,
                 _uintType,
@@ -3091,7 +3091,7 @@ public static partial class Gen5SpirvTranslator
             var activeCarry = _module.AddInstruction(
                 SpirvOp.LogicalAnd,
                 _boolType,
-                Load(_boolType, _exec),
+                LoadEffectiveExec(),
                 carry);
             if (instruction.Control is Gen5Vop3Control { ScalarDestination: { } register })
             {
@@ -3205,7 +3205,7 @@ public static partial class Gen5SpirvTranslator
             var activeWord = _module.AddInstruction(
                 SpirvOp.Select,
                 _uintType,
-                Load(_boolType, _exec),
+                LoadEffectiveExec(),
                 UInt(1),
                 UInt(0));
             var sourceActive = IsNotZero(

@@ -8499,10 +8499,13 @@ public static partial class AgcExports
 
         var writesGlobalMemory = evaluation.GlobalMemoryBindings.Any(static binding =>
             binding.Writable);
+        var usesGds = shaderState.Program.Instructions.Any(static instruction =>
+            instruction.Control is Gen5DataShareControl { Gds: true });
         var gpuDispatch = false;
         var evaluationHandledByCpu = false;
         var computeError = string.Empty;
-        if (!hasStorageBinding &&
+        if (!usesGds &&
+            !hasStorageBinding &&
             writesGlobalMemory &&
             TrySubmitMaskedDwordCopyKernel(
                 ctx,
@@ -8536,8 +8539,13 @@ public static partial class AgcExports
                     $"semantic-global-write-sync-timeout sequence={semanticCopySequence}";
             }
         }
-        else if ((hasStorageBinding || writesGlobalMemory) &&
-            (ulong)localSizeX * localSizeY * localSizeZ <= 1024)
+        else if (ShouldTranslateComputeProgram(
+            usesGds,
+            hasStorageBinding,
+            writesGlobalMemory,
+            localSizeX,
+            localSizeY,
+            localSizeZ))
         {
             var shaderKey = (
                 shaderAddress,
@@ -8680,6 +8688,16 @@ public static partial class AgcExports
             ReturnPooledEvaluationArrays(evaluation);
         }
     }
+
+    internal static bool ShouldTranslateComputeProgram(
+        bool usesGds,
+        bool hasStorageBinding,
+        bool writesGlobalMemory,
+        uint localSizeX,
+        uint localSizeY,
+        uint localSizeZ) =>
+        (usesGds || hasStorageBinding || writesGlobalMemory) &&
+        (ulong)localSizeX * localSizeY * localSizeZ <= 1024;
 
     /// <summary>
     /// Recognizes the SDK's masked-dword resource initialization kernel and

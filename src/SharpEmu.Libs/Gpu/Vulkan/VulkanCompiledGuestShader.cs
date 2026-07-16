@@ -4,7 +4,7 @@
 namespace SharpEmu.Libs.Gpu.Vulkan;
 
 /// <summary>The Vulkan backend's compiled shader: raw SPIR-V words.</summary>
-internal sealed record VulkanCompiledGuestShader(byte[] Spirv) : IGuestCompiledShader
+internal sealed record VulkanCompiledGuestShader(byte[] Spirv, bool UsesGds = false) : IGuestCompiledShader
 {
     public byte[] Payload => Spirv;
 
