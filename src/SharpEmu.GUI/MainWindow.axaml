@@ -17,6 +17,22 @@ SPDX-License-Identifier: GPL-2.0-or-later
         Icon="avares://SharpEmu.GUI/Assets/SharpEmu.ico"
         KeyDown="OnKeyDown">
 
+  <Window.Resources>
+    <DataTemplate x:Key="InputBindingRowTemplate">
+      <Grid Width="300" ColumnDefinitions="*,150" Margin="0,4,8,4">
+        <TextBlock Text="{Binding Label}" FontSize="13" VerticalAlignment="Center"
+                   Margin="0,0,12,0" TextTrimming="CharacterEllipsis" />
+        <ComboBox Grid.Column="1" ItemsSource="{Binding Choices}"
+                  SelectedItem="{Binding SelectedChoice, Mode=TwoWay}"
+                  DisplayMemberBinding="{Binding Label}" CornerRadius="8"
+                  AutomationProperties.Name="{Binding Label}" />
+      </Grid>
+    </DataTemplate>
+    <ItemsPanelTemplate x:Key="InputBindingPanelTemplate">
+      <WrapPanel Orientation="Horizontal" />
+    </ItemsPanelTemplate>
+  </Window.Resources>
+
   <Grid x:Name="MainShell" RowDefinitions="64,*,36">
 
     <!-- Selected-game backdrop: key art behind the main content, dimmed by
@@ -432,6 +448,104 @@ SPDX-License-Identifier: GPL-2.0-or-later
                                 MinWidth="144"
                                 AutomationProperties.AutomationId="OpenDiscordButton" />
                       </Grid>
+                    </StackPanel>
+                  </Border>
+                </StackPanel>
+              </ScrollViewer>
+            </TabItem>
+            <TabItem x:Name="ControlsTabItem" Header="Controls" FontSize="15">
+              <ScrollViewer HorizontalScrollBarVisibility="Disabled">
+                <StackPanel Margin="0,14,0,16" Spacing="16" MaxWidth="900" HorizontalAlignment="Stretch">
+                  <Grid ColumnDefinitions="*,Auto">
+                    <StackPanel Spacing="3" Margin="0,0,16,0">
+                      <TextBlock x:Name="ControlsPageTitle" Text="Input mappings" FontSize="18"
+                                 FontWeight="SemiBold" AutomationProperties.HeadingLevel="2" />
+                      <TextBlock x:Name="ControlsPageDescription"
+                                 Text="Global mappings apply when the next game starts. Launcher navigation keeps its standard layout."
+                                 FontSize="12" Foreground="{StaticResource MutedBrush}" TextWrapping="Wrap" />
+                    </StackPanel>
+                    <Button x:Name="ResetInputMappingsButton" Grid.Column="1" Classes="ghost compact"
+                            Content="Reset defaults" VerticalAlignment="Center"
+                            AutomationProperties.AutomationId="ResetInputMappingsButton" />
+                  </Grid>
+
+                  <Border Classes="card">
+                    <StackPanel Spacing="10">
+                      <TextBlock x:Name="ControllerBindingsTitle" Classes="sectionTitle"
+                                 Text="CONTROLLER BUTTONS" />
+                      <TextBlock x:Name="ControllerBindingsDescription"
+                                 Text="Choose which physical control drives each PlayStation button."
+                                 FontSize="11" Foreground="{StaticResource MutedBrush}" TextWrapping="Wrap" />
+                      <ItemsControl x:Name="ControllerBindingList"
+                                    ItemTemplate="{StaticResource InputBindingRowTemplate}"
+                                    ItemsPanel="{StaticResource InputBindingPanelTemplate}" />
+                    </StackPanel>
+                  </Border>
+
+                  <Border Classes="card">
+                    <StackPanel Spacing="14">
+                      <TextBlock x:Name="StickSettingsTitle" Classes="sectionTitle" Text="STICKS" />
+                      <Grid ColumnDefinitions="*,Auto">
+                        <StackPanel Spacing="2" Margin="0,0,16,0">
+                          <TextBlock x:Name="StickDeadzoneLabel" Text="Stick deadzone" FontSize="13" />
+                          <TextBlock x:Name="StickDeadzoneDescription"
+                                     Text="Ignore small movement around the center position (0–64)."
+                                     FontSize="11" Foreground="{StaticResource MutedBrush}" TextWrapping="Wrap" />
+                        </StackPanel>
+                        <NumericUpDown x:Name="StickDeadzoneBox" Grid.Column="1" Width="160"
+                                       Minimum="0" Maximum="64" Increment="1" FormatString="0" />
+                      </Grid>
+                      <Grid ColumnDefinitions="*,Auto">
+                        <TextBlock x:Name="SwapSticksLabel" Text="Swap left and right sticks" FontSize="13"
+                                   VerticalAlignment="Center" />
+                        <ToggleSwitch x:Name="SwapSticksToggle" Grid.Column="1" OnContent="On" OffContent="Off" />
+                      </Grid>
+                      <Grid ColumnDefinitions="*,Auto">
+                        <TextBlock x:Name="InvertLeftXLabel" Text="Invert left stick X" FontSize="13"
+                                   VerticalAlignment="Center" />
+                        <ToggleSwitch x:Name="InvertLeftXToggle" Grid.Column="1" OnContent="On" OffContent="Off" />
+                      </Grid>
+                      <Grid ColumnDefinitions="*,Auto">
+                        <TextBlock x:Name="InvertLeftYLabel" Text="Invert left stick Y" FontSize="13"
+                                   VerticalAlignment="Center" />
+                        <ToggleSwitch x:Name="InvertLeftYToggle" Grid.Column="1" OnContent="On" OffContent="Off" />
+                      </Grid>
+                      <Grid ColumnDefinitions="*,Auto">
+                        <TextBlock x:Name="InvertRightXLabel" Text="Invert right stick X" FontSize="13"
+                                   VerticalAlignment="Center" />
+                        <ToggleSwitch x:Name="InvertRightXToggle" Grid.Column="1" OnContent="On" OffContent="Off" />
+                      </Grid>
+                      <Grid ColumnDefinitions="*,Auto">
+                        <TextBlock x:Name="InvertRightYLabel" Text="Invert right stick Y" FontSize="13"
+                                   VerticalAlignment="Center" />
+                        <ToggleSwitch x:Name="InvertRightYToggle" Grid.Column="1" OnContent="On" OffContent="Off" />
+                      </Grid>
+                    </StackPanel>
+                  </Border>
+
+                  <Border Classes="card">
+                    <StackPanel Spacing="10">
+                      <TextBlock x:Name="KeyboardBindingsTitle" Classes="sectionTitle"
+                                 Text="KEYBOARD BUTTONS" />
+                      <TextBlock x:Name="KeyboardBindingsDescription"
+                                 Text="Assign a primary keyboard key to each PlayStation button. Choose Unbound to disable it."
+                                 FontSize="11" Foreground="{StaticResource MutedBrush}" TextWrapping="Wrap" />
+                      <ItemsControl x:Name="KeyboardBindingList"
+                                    ItemTemplate="{StaticResource InputBindingRowTemplate}"
+                                    ItemsPanel="{StaticResource InputBindingPanelTemplate}" />
+                    </StackPanel>
+                  </Border>
+
+                  <Border Classes="card">
+                    <StackPanel Spacing="10">
+                      <TextBlock x:Name="KeyboardSticksTitle" Classes="sectionTitle"
+                                 Text="KEYBOARD STICKS" />
+                      <TextBlock x:Name="KeyboardSticksDescription"
+                                 Text="Assign the negative and positive directions for both analog sticks."
+                                 FontSize="11" Foreground="{StaticResource MutedBrush}" TextWrapping="Wrap" />
+                      <ItemsControl x:Name="KeyboardAxisBindingList"
+                                    ItemTemplate="{StaticResource InputBindingRowTemplate}"
+                                    ItemsPanel="{StaticResource InputBindingPanelTemplate}" />
                     </StackPanel>
                   </Border>
                 </StackPanel>

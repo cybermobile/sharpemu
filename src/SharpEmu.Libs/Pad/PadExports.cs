@@ -24,6 +24,7 @@ public static class PadExports
     private const int ControllerInformationSize = 0x1C;
     private const int PadDataSize = 0x78;
     private static readonly long InputSampleIntervalTicks = Math.Max(1, Stopwatch.Frequency / 1000);
+    private static readonly HostInputProfile InputProfile = HostInputProfile.LoadFromEnvironment();
 
     [ThreadStatic]
     private static long _lastInputSampleTicks;
@@ -88,9 +89,10 @@ public static class PadExports
         input.EnsureStarted();
         if (Interlocked.Exchange(ref _controlsAnnouncementLogged, 1) == 0)
         {
+            var mapping = InputProfile.IsDefault ? "default mappings" : "custom mappings";
             Console.Error.WriteLine(input.DescribeConnectedGamepad() is { } gamepadName
-                ? $"[LOADER][INFO] Controls: {gamepadName} connected (keyboard fallback also active)."
-                : "[LOADER][INFO] Keyboard controls: Arrow keys = D-pad, WASD = left stick, IJKL = right stick, Z/Enter = Cross, X/Esc = Circle, C = Square, V = Triangle, Q = L1, E = R1, R = L2, F = R2, Tab/Backspace = Options. A DualSense or Xbox controller will be used automatically when plugged in.");
+                ? $"[LOADER][INFO] Controls: {gamepadName} connected; {mapping}; keyboard fallback active."
+                : $"[LOADER][INFO] Controls: keyboard active with {mapping}. A controller is used automatically when connected.");
         }
 
         return ctx.SetReturn(PrimaryPadHandle);
@@ -422,19 +424,27 @@ public static class PadExports
 
         var input = HostPlatform.Current.Input;
         var acceptsKeyboardInput = input.IsHostWindowFocused();
-        var buttons = acceptsKeyboardInput ? ReadKeyboardButtons(input) : 0;
-        var leftX = acceptsKeyboardInput ? ReadAnalogStick(input.IsKeyDown(0x41), input.IsKeyDown(0x44)) : (byte)128;
-        var leftY = acceptsKeyboardInput ? ReadAnalogStick(input.IsKeyDown(0x57), input.IsKeyDown(0x53)) : (byte)128;
-        var rightX = acceptsKeyboardInput ? ReadAnalogStick(input.IsKeyDown(0x4A), input.IsKeyDown(0x4C)) : (byte)128;
-        var rightY = acceptsKeyboardInput ? ReadAnalogStick(input.IsKeyDown(0x49), input.IsKeyDown(0x4B)) : (byte)128;
-        var l2 = acceptsKeyboardInput && input.IsKeyDown(0x52) ? (byte)255 : (byte)0;
-        var r2 = acceptsKeyboardInput && input.IsKeyDown(0x46) ? (byte)255 : (byte)0;
+        var buttons = acceptsKeyboardInput ? ReadKeyboardButtons(input, InputProfile) : 0;
+        var leftX = acceptsKeyboardInput
+            ? ReadAnalogStick(input.IsKeyDown(InputProfile.LeftStickLeftKey), input.IsKeyDown(InputProfile.LeftStickRightKey))
+            : (byte)128;
+        var leftY = acceptsKeyboardInput
+            ? ReadAnalogStick(input.IsKeyDown(InputProfile.LeftStickUpKey), input.IsKeyDown(InputProfile.LeftStickDownKey))
+            : (byte)128;
+        var rightX = acceptsKeyboardInput
+            ? ReadAnalogStick(input.IsKeyDown(InputProfile.RightStickLeftKey), input.IsKeyDown(InputProfile.RightStickRightKey))
+            : (byte)128;
+        var rightY = acceptsKeyboardInput
+            ? ReadAnalogStick(input.IsKeyDown(InputProfile.RightStickUpKey), input.IsKeyDown(InputProfile.RightStickDownKey))
+            : (byte)128;
+        var l2 = (buttons & OrbisPadButton.L2) != 0 ? byte.MaxValue : byte.MinValue;
+        var r2 = (buttons & OrbisPadButton.R2) != 0 ? byte.MaxValue : byte.MinValue;
 
         Span<HostGamepadState> gamepads = stackalloc HostGamepadState[2];
         var gamepadCount = input.GetGamepadStates(gamepads);
         for (var index = 0; index < gamepadCount; index++)
         {
-            var pad = gamepads[index];
+            var pad = InputProfile.Apply(gamepads[index]);
             buttons |= ToOrbisButtons(pad.Buttons);
             // The controller stick wins whenever it is deflected past a
             // small deadzone; otherwise any keyboard value stays.
@@ -532,26 +542,25 @@ public static class PadExports
         return result;
     }
 
-    private static uint ReadKeyboardButtons(IHostInput input)
+    private static uint ReadKeyboardButtons(IHostInput input, HostInputProfile profile)
     {
         uint buttons = 0;
-        // D-pad
-        if (input.IsKeyDown(0x25)) buttons |= OrbisPadButton.Left;
-        if (input.IsKeyDown(0x27)) buttons |= OrbisPadButton.Right;
-        if (input.IsKeyDown(0x26)) buttons |= OrbisPadButton.Up;
-        if (input.IsKeyDown(0x28)) buttons |= OrbisPadButton.Down;
-        // Face buttons
-        if (input.IsKeyDown(0x5A) || input.IsKeyDown(0x0D)) buttons |= OrbisPadButton.Cross;    // Z / Enter
-        if (input.IsKeyDown(0x58) || input.IsKeyDown(0x1B)) buttons |= OrbisPadButton.Circle;   // X / Escape
-        if (input.IsKeyDown(0x43)) buttons |= OrbisPadButton.Square;                            // C
-        if (input.IsKeyDown(0x56)) buttons |= OrbisPadButton.Triangle;                          // V
-        // Shoulder buttons
-        if (input.IsKeyDown(0x51)) buttons |= OrbisPadButton.L1;                                // Q
-        if (input.IsKeyDown(0x45)) buttons |= OrbisPadButton.R1;                                // E
-        if (input.IsKeyDown(0x52)) buttons |= OrbisPadButton.L2;                                // R (digital)
-        if (input.IsKeyDown(0x46)) buttons |= OrbisPadButton.R2;                                // F (digital)
-        // Options (Start)
-        if (input.IsKeyDown(0x09) || input.IsKeyDown(0x08)) buttons |= OrbisPadButton.Options;  // Tab / Backspace
+        if (profile.IsKeyboardBindingDown(HostInputButton.Left, input.IsKeyDown)) buttons |= OrbisPadButton.Left;
+        if (profile.IsKeyboardBindingDown(HostInputButton.Right, input.IsKeyDown)) buttons |= OrbisPadButton.Right;
+        if (profile.IsKeyboardBindingDown(HostInputButton.Up, input.IsKeyDown)) buttons |= OrbisPadButton.Up;
+        if (profile.IsKeyboardBindingDown(HostInputButton.Down, input.IsKeyDown)) buttons |= OrbisPadButton.Down;
+        if (profile.IsKeyboardBindingDown(HostInputButton.Cross, input.IsKeyDown)) buttons |= OrbisPadButton.Cross;
+        if (profile.IsKeyboardBindingDown(HostInputButton.Circle, input.IsKeyDown)) buttons |= OrbisPadButton.Circle;
+        if (profile.IsKeyboardBindingDown(HostInputButton.Square, input.IsKeyDown)) buttons |= OrbisPadButton.Square;
+        if (profile.IsKeyboardBindingDown(HostInputButton.Triangle, input.IsKeyDown)) buttons |= OrbisPadButton.Triangle;
+        if (profile.IsKeyboardBindingDown(HostInputButton.L1, input.IsKeyDown)) buttons |= OrbisPadButton.L1;
+        if (profile.IsKeyboardBindingDown(HostInputButton.R1, input.IsKeyDown)) buttons |= OrbisPadButton.R1;
+        if (profile.IsKeyboardBindingDown(HostInputButton.L2, input.IsKeyDown)) buttons |= OrbisPadButton.L2;
+        if (profile.IsKeyboardBindingDown(HostInputButton.R2, input.IsKeyDown)) buttons |= OrbisPadButton.R2;
+        if (profile.IsKeyboardBindingDown(HostInputButton.L3, input.IsKeyDown)) buttons |= OrbisPadButton.L3;
+        if (profile.IsKeyboardBindingDown(HostInputButton.R3, input.IsKeyDown)) buttons |= OrbisPadButton.R3;
+        if (profile.IsKeyboardBindingDown(HostInputButton.Options, input.IsKeyDown)) buttons |= OrbisPadButton.Options;
+        if (profile.IsKeyboardBindingDown(HostInputButton.TouchPad, input.IsKeyDown)) buttons |= OrbisPadButton.TouchPad;
         return buttons;
     }
 
@@ -564,7 +573,6 @@ public static class PadExports
 
     private static byte MergeAxis(byte controller, byte keyboard)
     {
-        const int Deadzone = 10;
-        return Math.Abs(controller - 128) > Deadzone ? controller : keyboard;
+        return controller != 128 ? controller : keyboard;
     }
 }

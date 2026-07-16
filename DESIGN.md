@@ -34,7 +34,7 @@ SPDX-License-Identifier: GPL-2.0-or-later
 ## Information architecture
 
 - Primary navigation: The library is the default desktop workspace. A compact top command bar exposes library, settings, launch, and diagnostic actions; settings use a category rail inside their own workspace rather than consuming permanent main-window width.
-- Core routes/screens: Library grid, library empty/search/loading states, General options, Environment/debug options, selected-game action bar, and collapsible console.
+- Core routes/screens: Library grid, library empty/search/loading states, General options, Controls/input mapping, Environment/debug options, selected-game action bar, and collapsible console.
 - Content hierarchy: Native window/menu context and compact commands first; search and library content second; selected-title metadata and primary launch action in a distinct bottom inspector; diagnostics and emulator/build status last.
 
 ## Design principles
@@ -43,6 +43,7 @@ SPDX-License-Identifier: GPL-2.0-or-later
 - State is never color-only: Pair color with text, outline, shape, or iconography for selection, focus, success, warning, and running state.
 - Progressive disclosure: Keep compatibility/debug controls and console output available but outside the primary launch path.
 - Separate play from tuning: Keep the common library-and-launch path stable; present global settings as a dedicated workspace and make per-game overrides explicit when they are introduced.
+- Safe input recovery: Controller and keyboard mappings always expose defaults, avoid capture-only dead ends, and remain usable without a connected controller.
 - Two interaction modes, not one compromise: Retain a compact desktop UI now; a future controller-first or Big Picture surface should be purpose-built rather than stretching desktop navigation into a console shell.
 - Quiet hierarchy: Use spacing, type weight, and restrained surfaces before glow, gradients, or heavy borders.
 - Tradeoffs: Preserve existing behavior and localization wiring before introducing richer navigation or a new component framework.
@@ -59,7 +60,7 @@ SPDX-License-Identifier: GPL-2.0-or-later
 ## Components
 
 - Existing components to reuse: Avalonia Fluent controls, card and pill styles, library tile `ListBox`, native `TabControl`, launch bar, and console panel.
-- New/changed components: Desktop title/menu chrome, compact command toolbar, clear active workspace treatment, settings category rail, consistent control heights, visible focus rings, accessible search/toolbar metadata, improved empty state, larger artwork grid, and a visually distinct selected-game inspector.
+- New/changed components: Desktop title/menu chrome, compact command toolbar, clear active workspace treatment, settings category rail, controller/keyboard binding rows, reset-to-defaults action, consistent control heights, visible focus rings, accessible search/toolbar metadata, improved empty state, larger artwork grid, and a visually distinct selected-game inspector.
 - Variants and states: Default, pointer-over, pressed, keyboard-focus, selected/checked, disabled, loading, empty, error, running, and stopped.
 - Token/component ownership: Shared color, typography, shape, control-size, and state tokens live in `App.axaml`; page composition remains in `MainWindow.axaml`.
 
@@ -82,7 +83,7 @@ SPDX-License-Identifier: GPL-2.0-or-later
 - Loading: Preserve context, show a concise label and indeterminate progress without blocking unrelated navigation.
 - Empty: Explain why the space is empty and offer one primary recovery action.
 - Error: Use specific plain-language status text, retain logs, and avoid terminating the launcher for recoverable failures.
-- Success: Confirm scans, copies, and launches in the status region without modal interruption.
+- Success: Confirm scans, copies, and launches in the status region without modal interruption; remapping changes apply to the next game launch and reset updates every visible binding immediately.
 - Disabled: Keep the control visible, lower emphasis, and make the prerequisite clear from nearby text.
 - Offline/slow network: Core library and launch flows do not require a network; external community links fail without affecting emulator use.
 
@@ -98,6 +99,7 @@ SPDX-License-Identifier: GPL-2.0-or-later
 - Design-token constraints: Extend existing resources in `App.axaml`; do not add a second theme package or new dependency.
 - Performance constraints: Avoid per-frame UI allocations, oversized blurred layers, and artwork effects that compete with emulation/rendering workloads.
 - Compatibility constraints: Preserve localization keys, controller navigation, macOS main-thread window behavior, Rosetta-supported `osx-x64` publishing, and the existing single-executable release shape.
+- Input constraints: The first remapping surface is global and dropdown-based. Per-game profiles, multiple guest pads, and macOS press-to-bind capture remain later capabilities because controller events currently live in the separate presenter process.
 - Test/screenshot expectations: XAML must compile in Debug and Release; unit tests and REUSE lint must pass; the macOS app must launch and expose the expected accessibility tree. Visual screenshot capture is attempted when host permissions allow it.
 
 ## Open questions

@@ -18,6 +18,7 @@ using SharpEmu.HLE.Host.Windows;
 using SharpEmu.Logging;
 using System.Collections.Concurrent;
 using System.Collections.ObjectModel;
+using System.ComponentModel;
 using System.Diagnostics;
 using System.Reflection;
 using System.Text.Json;
@@ -75,6 +76,7 @@ public partial class MainWindow : Window
     private long _navRightNextAt;
     private long _navUpNextAt;
     private long _navDownNextAt;
+    private bool _inputSettingsInitialized;
 
     public MainWindow()
     {
@@ -158,6 +160,19 @@ public partial class MainWindow : Window
             SetEnvironmentToggle("SHARPEMU_LOG_DIRECT_MEMORY", EnvLogDirectMemoryToggle.IsChecked == true);
         EnvLogNpToggle.IsCheckedChanged += (_, _) =>
             SetEnvironmentToggle("SHARPEMU_LOG_NP", EnvLogNpToggle.IsChecked == true);
+        ResetInputMappingsButton.Click += (_, _) => ResetInputMappings();
+        StickDeadzoneBox.ValueChanged += (_, _) => UpdateInputProfile(profile =>
+            profile.StickDeadzone = (int)(StickDeadzoneBox.Value ?? 10));
+        SwapSticksToggle.IsCheckedChanged += (_, _) => UpdateInputProfile(profile =>
+            profile.SwapSticks = SwapSticksToggle.IsChecked == true);
+        InvertLeftXToggle.IsCheckedChanged += (_, _) => UpdateInputProfile(profile =>
+            profile.InvertLeftX = InvertLeftXToggle.IsChecked == true);
+        InvertLeftYToggle.IsCheckedChanged += (_, _) => UpdateInputProfile(profile =>
+            profile.InvertLeftY = InvertLeftYToggle.IsChecked == true);
+        InvertRightXToggle.IsCheckedChanged += (_, _) => UpdateInputProfile(profile =>
+            profile.InvertRightX = InvertRightXToggle.IsChecked == true);
+        InvertRightYToggle.IsCheckedChanged += (_, _) => UpdateInputProfile(profile =>
+            profile.InvertRightY = InvertRightYToggle.IsChecked == true);
         LanguageBox.SelectionChanged += (_, _) => OnLanguageChanged();
 
         GameList.AddHandler(ContextRequestedEvent, OnGameContextRequested, RoutingStrategies.Tunnel);
@@ -376,6 +391,7 @@ public partial class MainWindow : Window
         PopulateLanguageBox();
         ApplyLocalization();
         ApplySettingsToControls();
+        _inputSettingsInitialized = true;
         LocateEmulator();
         UpdateDiscordPresence();
         await RescanLibraryAsync();
@@ -448,7 +464,25 @@ public partial class MainWindow : Window
         LoadingStateText.Text = loc.Get("Library.Loading");
 
         GeneralTabItem.Header = loc.Get("Options.General");
+        ControlsTabItem.Header = loc.Get("Options.Controls");
         EnvTabItem.Header = loc.Get("Options.Env.Tab");
+        ControlsPageTitle.Text = loc.Get("Input.Title");
+        ControlsPageDescription.Text = loc.Get("Input.Description");
+        ResetInputMappingsButton.Content = loc.Get("Input.Reset");
+        ControllerBindingsTitle.Text = loc.Get("Input.Controller.Title");
+        ControllerBindingsDescription.Text = loc.Get("Input.Controller.Desc");
+        StickSettingsTitle.Text = loc.Get("Input.Sticks.Title");
+        StickDeadzoneLabel.Text = loc.Get("Input.Deadzone.Label");
+        StickDeadzoneDescription.Text = loc.Get("Input.Deadzone.Desc");
+        SwapSticksLabel.Text = loc.Get("Input.SwapSticks");
+        InvertLeftXLabel.Text = loc.Get("Input.InvertLeftX");
+        InvertLeftYLabel.Text = loc.Get("Input.InvertLeftY");
+        InvertRightXLabel.Text = loc.Get("Input.InvertRightX");
+        InvertRightYLabel.Text = loc.Get("Input.InvertRightY");
+        KeyboardBindingsTitle.Text = loc.Get("Input.Keyboard.Title");
+        KeyboardBindingsDescription.Text = loc.Get("Input.Keyboard.Desc");
+        KeyboardSticksTitle.Text = loc.Get("Input.KeyboardSticks.Title");
+        KeyboardSticksDescription.Text = loc.Get("Input.KeyboardSticks.Desc");
         EnvSectionTitle.Text = loc.Get("Options.Section.Environment");
         EnvDesc.Text = loc.Get("Options.Env.Desc");
         EnvBthidDesc.Text = loc.Get("Options.Env.Bthid.Desc");
@@ -499,7 +533,19 @@ public partial class MainWindow : Window
         DiscordLabel.Text = loc.Get("Options.Discord.Label");
         DiscordDesc.Text = loc.Get("Options.Discord.Desc");
 
-        foreach (var toggle in new[] { StrictToggle, LogToFileToggle, OverrideLogFileToggle, TitleMusicToggle, DiscordToggle })
+        foreach (var toggle in new[]
+        {
+            StrictToggle,
+            LogToFileToggle,
+            OverrideLogFileToggle,
+            TitleMusicToggle,
+            DiscordToggle,
+            SwapSticksToggle,
+            InvertLeftXToggle,
+            InvertLeftYToggle,
+            InvertRightXToggle,
+            InvertRightYToggle,
+        })
         {
             toggle.OnContent = loc.Get("Common.On");
             toggle.OffContent = loc.Get("Common.Off");
@@ -524,6 +570,7 @@ public partial class MainWindow : Window
         GithubButton.Content = loc.Get("About.GithubButton");
         DiscordButton.Content = loc.Get("About.DiscordButton");
 
+        PopulateInputBindingRows();
         ApplyAccessibilityLabels();
 
         UpdateEmptyStateTexts();
@@ -549,6 +596,12 @@ public partial class MainWindow : Window
         SetAccessibility(LanguageBox, LanguageLabel, LanguageDesc);
         SetAccessibility(TitleMusicToggle, TitleMusicLabel, TitleMusicDesc);
         SetAccessibility(DiscordToggle, DiscordLabel, DiscordDesc);
+        SetAccessibility(StickDeadzoneBox, StickDeadzoneLabel, StickDeadzoneDescription);
+        SetAccessibility(SwapSticksToggle, SwapSticksLabel.Text, ControlsPageDescription.Text);
+        SetAccessibility(InvertLeftXToggle, InvertLeftXLabel.Text, ControlsPageDescription.Text);
+        SetAccessibility(InvertLeftYToggle, InvertLeftYLabel.Text, ControlsPageDescription.Text);
+        SetAccessibility(InvertRightXToggle, InvertRightXLabel.Text, ControlsPageDescription.Text);
+        SetAccessibility(InvertRightYToggle, InvertRightYLabel.Text, ControlsPageDescription.Text);
 
         SetAccessibility(EnvBthidToggle, "SHARPEMU_BTHID_UNAVAILABLE", EnvBthidDesc.Text);
         SetAccessibility(EnvLoopGuardToggle, "SHARPEMU_DISABLE_IMPORT_LOOP_GUARD", EnvLoopGuardDesc.Text);
@@ -692,7 +745,125 @@ public partial class MainWindow : Window
         EnvDumpSpirvToggle.IsChecked = _settings.EnvironmentToggles.Contains("SHARPEMU_DUMP_SPIRV");
         EnvLogDirectMemoryToggle.IsChecked = _settings.EnvironmentToggles.Contains("SHARPEMU_LOG_DIRECT_MEMORY");
         EnvLogNpToggle.IsChecked = _settings.EnvironmentToggles.Contains("SHARPEMU_LOG_NP");
+        ApplyInputProfileToControls();
         UpdateLogFilePathText();
+    }
+
+    private void ApplyInputProfileToControls()
+    {
+        var profile = _settings.InputProfile ??= HostInputProfile.CreateDefault();
+        profile.Normalize();
+        StickDeadzoneBox.Value = profile.StickDeadzone;
+        SwapSticksToggle.IsChecked = profile.SwapSticks;
+        InvertLeftXToggle.IsChecked = profile.InvertLeftX;
+        InvertLeftYToggle.IsChecked = profile.InvertLeftY;
+        InvertRightXToggle.IsChecked = profile.InvertRightX;
+        InvertRightYToggle.IsChecked = profile.InvertRightY;
+        PopulateInputBindingRows();
+    }
+
+    private void PopulateInputBindingRows()
+    {
+        var profile = _settings.InputProfile ??= HostInputProfile.CreateDefault();
+        profile.Normalize();
+        var loc = Localization.Instance;
+        var controllerChoices = HostInputProfile.SupportedButtons
+            .Select(button => new InputChoice((int)button, InputSourceButtonLabel(button)))
+            .ToArray();
+        ControllerBindingList.ItemsSource = HostInputProfile.SupportedButtons
+            .Select(target => new InputBindingRow(
+                InputButtonLabel(target),
+                controllerChoices,
+                (int)profile.GetControllerBinding(target),
+                value => UpdateInputProfile(current =>
+                    current.SetControllerBinding(target, (HostInputButton)value))))
+            .ToArray();
+
+        var keyboardChoices = CreateKeyboardChoices(loc);
+        KeyboardBindingList.ItemsSource = HostInputProfile.SupportedButtons
+            .Select(target => new InputBindingRow(
+                InputButtonLabel(target),
+                keyboardChoices,
+                profile.GetKeyboardBinding(target).FirstOrDefault(),
+                value => UpdateInputProfile(current =>
+                    current.SetPrimaryKeyboardBinding(target, value))))
+            .ToArray();
+
+        var axisKeyboardChoices = keyboardChoices.Where(choice => choice.Value != 0).ToArray();
+        KeyboardAxisBindingList.ItemsSource = new[]
+        {
+            new InputBindingRow(loc.Get("Input.Axis.LeftLeft"), axisKeyboardChoices, profile.LeftStickLeftKey,
+                value => UpdateInputProfile(current => current.LeftStickLeftKey = value)),
+            new InputBindingRow(loc.Get("Input.Axis.LeftRight"), axisKeyboardChoices, profile.LeftStickRightKey,
+                value => UpdateInputProfile(current => current.LeftStickRightKey = value)),
+            new InputBindingRow(loc.Get("Input.Axis.LeftUp"), axisKeyboardChoices, profile.LeftStickUpKey,
+                value => UpdateInputProfile(current => current.LeftStickUpKey = value)),
+            new InputBindingRow(loc.Get("Input.Axis.LeftDown"), axisKeyboardChoices, profile.LeftStickDownKey,
+                value => UpdateInputProfile(current => current.LeftStickDownKey = value)),
+            new InputBindingRow(loc.Get("Input.Axis.RightLeft"), axisKeyboardChoices, profile.RightStickLeftKey,
+                value => UpdateInputProfile(current => current.RightStickLeftKey = value)),
+            new InputBindingRow(loc.Get("Input.Axis.RightRight"), axisKeyboardChoices, profile.RightStickRightKey,
+                value => UpdateInputProfile(current => current.RightStickRightKey = value)),
+            new InputBindingRow(loc.Get("Input.Axis.RightUp"), axisKeyboardChoices, profile.RightStickUpKey,
+                value => UpdateInputProfile(current => current.RightStickUpKey = value)),
+            new InputBindingRow(loc.Get("Input.Axis.RightDown"), axisKeyboardChoices, profile.RightStickDownKey,
+                value => UpdateInputProfile(current => current.RightStickDownKey = value)),
+        };
+    }
+
+    private string InputButtonLabel(HostInputButton button) =>
+        Localization.Instance.Get($"Input.Button.{button}");
+
+    private string InputSourceButtonLabel(HostInputButton button)
+    {
+        var key = $"Input.Source.{button}";
+        var localized = Localization.Instance.Get(key);
+        return localized == key ? InputButtonLabel(button) : localized;
+    }
+
+    private static InputChoice[] CreateKeyboardChoices(Localization loc)
+    {
+        var choices = new List<InputChoice>
+        {
+            new(0, loc.Get("Input.Key.Unbound")),
+            new(0x26, loc.Get("Input.Key.ArrowUp")),
+            new(0x28, loc.Get("Input.Key.ArrowDown")),
+            new(0x25, loc.Get("Input.Key.ArrowLeft")),
+            new(0x27, loc.Get("Input.Key.ArrowRight")),
+        };
+        for (var key = 'A'; key <= 'Z'; key++)
+        {
+            choices.Add(new InputChoice(key, key.ToString()));
+        }
+
+        choices.Add(new InputChoice(0x0D, loc.Get("Input.Key.Enter")));
+        choices.Add(new InputChoice(0x1B, loc.Get("Input.Key.Escape")));
+        choices.Add(new InputChoice(0x09, loc.Get("Input.Key.Tab")));
+        choices.Add(new InputChoice(0x08, loc.Get("Input.Key.Backspace")));
+        return choices.ToArray();
+    }
+
+    private void UpdateInputProfile(Action<HostInputProfile> update)
+    {
+        if (!_inputSettingsInitialized)
+        {
+            return;
+        }
+
+        var profile = _settings.InputProfile ??= HostInputProfile.CreateDefault();
+        update(profile);
+        profile.Normalize();
+        _settings.Save();
+    }
+
+    private void ResetInputMappings()
+    {
+        _inputSettingsInitialized = false;
+        _settings.InputProfile = HostInputProfile.CreateDefault();
+        ApplyInputProfileToControls();
+        _inputSettingsInitialized = true;
+        _settings.Save();
+        StatusBarRight.Text = Localization.Instance.Get("Status.InputMappingsReset");
     }
 
     // Environment variables set on this process at the previous launch; children
@@ -1550,6 +1721,11 @@ public partial class MainWindow : Window
             _appliedEnvironmentVariables.Add(name);
         }
 
+        var inputProfile = _settings.InputProfile ??= HostInputProfile.CreateDefault();
+        Environment.SetEnvironmentVariable(
+            HostInputProfile.EnvironmentVariableName,
+            inputProfile.ToEnvironmentValue());
+
         var emulator = new EmulatorProcess();
         emulator.OutputReceived += (line, isError) => _pendingLines.Enqueue((line, isError));
         emulator.Exited += code => Dispatcher.UIThread.Post(() => OnEmulatorExited(code));
@@ -1909,5 +2085,47 @@ public partial class MainWindow : Window
             ConsolePanel.IsVisible = true;
         };
         _consoleWindow.Show(this);
+    }
+
+    private sealed record InputChoice(int Value, string Label);
+
+    private sealed class InputBindingRow : INotifyPropertyChanged
+    {
+        private readonly Action<int> _selectionChanged;
+        private InputChoice? _selectedChoice;
+
+        public InputBindingRow(
+            string label,
+            IReadOnlyList<InputChoice> choices,
+            int selectedValue,
+            Action<int> selectionChanged)
+        {
+            Label = label;
+            Choices = choices;
+            _selectionChanged = selectionChanged;
+            _selectedChoice = choices.FirstOrDefault(choice => choice.Value == selectedValue) ?? choices[0];
+        }
+
+        public event PropertyChangedEventHandler? PropertyChanged;
+
+        public string Label { get; }
+
+        public IReadOnlyList<InputChoice> Choices { get; }
+
+        public InputChoice? SelectedChoice
+        {
+            get => _selectedChoice;
+            set
+            {
+                if (value is null || Equals(_selectedChoice, value))
+                {
+                    return;
+                }
+
+                _selectedChoice = value;
+                PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(SelectedChoice)));
+                _selectionChanged(value.Value);
+            }
+        }
     }
 }
