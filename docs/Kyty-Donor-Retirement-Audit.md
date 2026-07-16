@@ -12,7 +12,7 @@ Date: 2026-07-16
 - Donor: [InoriRus/Kyty](https://github.com/InoriRus/Kyty) at
   `4733b7e1c91b10554a52007903d74dc76c39a230` (MIT).
 - Destination: [sharpemu/sharpemu](https://github.com/sharpemu/sharpemu), based
-  on `864cbb013f9603b976c54e04d7a4583c497ff76f` for this audit.
+  on `864cbb0fa0ce1f5ce6a41a73d2c4ad78bbd89adf` for this audit.
 - The public Nmzik/KytyPS5 repository is not a source donor: its repository
   contains release packaging, documentation, and binaries but no emulator
   source that can be reviewed or merged.
