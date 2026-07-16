@@ -10,7 +10,7 @@ SPDX-License-Identifier: GPL-2.0-or-later
 - Status: Active
 - Last refreshed: 2026-07-16
 - Primary product surfaces: Desktop game library, launch controls, emulator options, environment/debug options, and runtime console.
-- Evidence reviewed: `README.md`, `src/SharpEmu.GUI/App.axaml`, `src/SharpEmu.GUI/MainWindow.axaml`, `src/SharpEmu.GUI/MainWindow.axaml.cs`, `src/SharpEmu.GUI/Languages/*.json`, and `assets/images/*`.
+- Evidence reviewed: `README.md`, `src/SharpEmu.GUI/App.axaml`, `src/SharpEmu.GUI/MainWindow.axaml`, `src/SharpEmu.GUI/MainWindow.axaml.cs`, `src/SharpEmu.GUI/Languages/*.json`, `assets/images/*`, RPCS3's Qt main window/settings/game-list sources, and PCSX2's Qt game-list/settings sources plus its 2.0 and 2.6 UI retrospectives.
 - Assumption: Until user research says otherwise, prioritize emulator developers and compatibility testers while keeping the common select-and-launch path approachable.
 
 ## Brand
@@ -33,15 +33,17 @@ SPDX-License-Identifier: GPL-2.0-or-later
 
 ## Information architecture
 
-- Primary navigation: Library and Options live in a persistent left rail with a clearly filled active state. General and Environment are secondary option categories within Options.
+- Primary navigation: The library is the default desktop workspace. A compact top command bar exposes library, settings, launch, and diagnostic actions; settings use a category rail inside their own workspace rather than consuming permanent main-window width.
 - Core routes/screens: Library grid, library empty/search/loading states, General options, Environment/debug options, selected-game action bar, and collapsible console.
-- Content hierarchy: Persistent brand/navigation rail first; current destination and contextual commands in a top header; library or settings content in the main canvas; selected-title metadata and primary launch action in a distinct bottom inspector; diagnostics and emulator path last.
+- Content hierarchy: Native window/menu context and compact commands first; search and library content second; selected-title metadata and primary launch action in a distinct bottom inspector; diagnostics and emulator/build status last.
 
 ## Design principles
 
 - Desktop first, console friendly: Follow desktop window, keyboard, and accessibility conventions while retaining optional gamepad shortcuts.
 - State is never color-only: Pair color with text, outline, shape, or iconography for selection, focus, success, warning, and running state.
 - Progressive disclosure: Keep compatibility/debug controls and console output available but outside the primary launch path.
+- Separate play from tuning: Keep the common library-and-launch path stable; present global settings as a dedicated workspace and make per-game overrides explicit when they are introduced.
+- Two interaction modes, not one compromise: Retain a compact desktop UI now; a future controller-first or Big Picture surface should be purpose-built rather than stretching desktop navigation into a console shell.
 - Quiet hierarchy: Use spacing, type weight, and restrained surfaces before glow, gradients, or heavy borders.
 - Tradeoffs: Preserve existing behavior and localization wiring before introducing richer navigation or a new component framework.
 
@@ -57,7 +59,7 @@ SPDX-License-Identifier: GPL-2.0-or-later
 ## Components
 
 - Existing components to reuse: Avalonia Fluent controls, card and pill styles, library tile `ListBox`, native `TabControl`, launch bar, and console panel.
-- New/changed components: Persistent navigation rail, contextual page header, clear active navigation treatment, consistent control heights, visible focus rings, accessible search/toolbar metadata, improved empty state, larger artwork grid, and a visually distinct selected-game inspector.
+- New/changed components: Desktop title/menu chrome, compact command toolbar, clear active workspace treatment, settings category rail, consistent control heights, visible focus rings, accessible search/toolbar metadata, improved empty state, larger artwork grid, and a visually distinct selected-game inspector.
 - Variants and states: Default, pointer-over, pressed, keyboard-focus, selected/checked, disabled, loading, empty, error, running, and stopped.
 - Token/component ownership: Shared color, typography, shape, control-size, and state tokens live in `App.axaml`; page composition remains in `MainWindow.axaml`.
 

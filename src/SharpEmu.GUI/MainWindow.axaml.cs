@@ -85,7 +85,7 @@ public partial class MainWindow : Window
         // compact inset used by Windows and Linux.
         if (OperatingSystem.IsMacOS())
         {
-            TitleBarContent.Margin = new Thickness(76, 0, 16, 0);
+            TitleBarContent.Margin = new Thickness(76, 0, 22, 0);
         }
 
         GameList.ItemsSource = _visibleGames;
@@ -118,6 +118,13 @@ public partial class MainWindow : Window
         DetachConsoleButton.Click += (_, _) => ShowConsoleWindow();
         LibraryTabButton.Click += (_, _) => SetActivePage(0);
         OptionsTabButton.Click += (_, _) => SetActivePage(1);
+        MenuLibrary.Click += (_, _) => SetActivePage(0);
+        MenuSettings.Click += (_, _) => SetActivePage(1);
+        MenuOpenFile.Click += async (_, _) => await OpenFileAsync();
+        MenuAddFolder.Click += async (_, _) => await AddFolderAsync();
+        MenuRescan.Click += async (_, _) => await RescanLibraryAsync();
+        MenuConsole.Click += (_, _) => ConsoleToggle.IsChecked = ConsoleToggle.IsChecked != true;
+        MenuFullscreen.Click += (_, args) => OnWindowFullScreen(this, args);
         ConsoleToggle.IsCheckedChanged += (_, _) => ConsolePanel.IsVisible = ConsoleToggle.IsChecked == true && _consoleWindow is null;
 
         // The settings page edits _settings live, so a launch started while
@@ -175,23 +182,10 @@ public partial class MainWindow : Window
         _gamepadTimer.Start();
 
 
-        GithubButton.Click += (_, _) =>
-        {
-            Process.Start(new ProcessStartInfo
-            {
-                FileName = "https://github.com/sharpemu/sharpemu",
-                UseShellExecute = true
-            });
-        };
-
-        DiscordButton.Click += (_, _) =>
-        {
-            Process.Start(new ProcessStartInfo
-            {
-                FileName = "https://discord.com/invite/6GejPEDqpc",
-                UseShellExecute = true
-            });
-        };
+        GithubButton.Click += (_, _) => OpenExternalUrl("https://github.com/sharpemu/sharpemu");
+        DiscordButton.Click += (_, _) => OpenExternalUrl("https://discord.com/invite/6GejPEDqpc");
+        MenuGithub.Click += (_, _) => OpenExternalUrl("https://github.com/sharpemu/sharpemu");
+        MenuDiscord.Click += (_, _) => OpenExternalUrl("https://discord.com/invite/6GejPEDqpc");
     }
 
     /// <summary>
@@ -215,8 +209,12 @@ public partial class MainWindow : Window
         SetActiveClass(OptionsTabButton, index == 1);
         PageTitleText.Text = Localization.Instance.Get(
             index == 0 ? "Page.Library" : "Page.Options");
+        PageSubtitleText.Text = Localization.Instance.Get(
+            index == 0 ? "Page.Library.Desc" : "Page.Options.Desc");
         LibraryPage.IsVisible = index == 0;
         LibraryToolbar.IsVisible = index == 0;
+        SelectedGamePanel.IsVisible = index == 0;
+        BackdropImage.IsVisible = index == 0;
         OptionsPage.IsVisible = index == 1;
     }
 
@@ -416,9 +414,24 @@ public partial class MainWindow : Window
         LibraryTabButton.Content = loc.Get("Page.Library");
         OptionsTabButton.Content = loc.Get("Page.Options");
         PageTitleText.Text = loc.Get(_activePageIndex == 0 ? "Page.Library" : "Page.Options");
-        SidebarSectionTitle.Text = loc.Get("Sidebar.Workspace");
+        PageSubtitleText.Text = loc.Get(_activePageIndex == 0 ? "Page.Library.Desc" : "Page.Options.Desc");
         BuildCardTitle.Text = loc.Get("Sidebar.BuildTitle");
-        BuildCardDescription.Text = loc.Get("Sidebar.BuildDesc");
+        SettingsScopeTitle.Text = loc.Get("Settings.Scope.Title");
+        SettingsScopeDescription.Text = loc.Get("Settings.Scope.Desc");
+        SettingsScopeBadge.Text = loc.Get("Settings.Scope.Badge");
+
+        FileMenuItem.Header = loc.Get("Menu.File");
+        ViewMenuItem.Header = loc.Get("Menu.View");
+        HelpMenuItem.Header = loc.Get("Menu.Help");
+        MenuOpenFile.Header = loc.Get("Library.OpenFile");
+        MenuAddFolder.Header = loc.Get("Library.AddFolder");
+        MenuRescan.Header = loc.Get("Library.Rescan");
+        MenuLibrary.Header = loc.Get("Page.Library");
+        MenuSettings.Header = loc.Get("Page.Options");
+        MenuConsole.Header = loc.Get("Launch.Console");
+        MenuFullscreen.Header = loc.Get("Menu.Fullscreen");
+        MenuGithub.Header = loc.Get("Menu.Project");
+        MenuDiscord.Header = loc.Get("Menu.Community");
 
         SearchBox.Watermark = loc.Get("Library.SearchWatermark");
         AddFolderButton.Content = loc.Get("Library.AddFolder");
@@ -612,8 +625,6 @@ public partial class MainWindow : Window
         {
             WindowState = WindowState.Normal;
             ExtendClientAreaChromeHints = ExtendClientAreaChromeHints.PreferSystemChrome;
-            MainShell.ColumnDefinitions[0].Width = new GridLength(224);
-            Sidebar.IsVisible = true;
             TitleBar.IsVisible = true;
             StatusBar.IsVisible = true;
         }
@@ -621,11 +632,18 @@ public partial class MainWindow : Window
         {
             WindowState = WindowState.FullScreen;
             ExtendClientAreaChromeHints = ExtendClientAreaChromeHints.NoChrome;
-            Sidebar.IsVisible = false;
-            MainShell.ColumnDefinitions[0].Width = new GridLength(0);
             TitleBar.IsVisible = false;
             StatusBar.IsVisible = false;
         }
+    }
+
+    private static void OpenExternalUrl(string url)
+    {
+        Process.Start(new ProcessStartInfo
+        {
+            FileName = url,
+            UseShellExecute = true,
+        });
     }
 
     private void OnWindowClosing()

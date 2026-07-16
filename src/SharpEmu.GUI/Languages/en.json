@@ -2,13 +2,24 @@
   "_languageName": "English",
 
   "Page.Library": "Library",
-  "Page.Options": "Options",
+  "Page.Library.Desc": "Browse, inspect, and launch installed games.",
+  "Page.Options": "Settings",
+  "Page.Options.Desc": "Configure global emulator and diagnostic defaults.",
   "Page.GameCount.One": "1 game",
   "Page.GameCount.Other": "{0} games",
 
-  "Sidebar.Workspace": "WORKSPACE",
   "Sidebar.BuildTitle": "EXPERIMENTAL BUILD",
-  "Sidebar.BuildDesc": "PS5 emulation is still under active development.",
+
+  "Menu.File": "File",
+  "Menu.View": "View",
+  "Menu.Help": "Help",
+  "Menu.Fullscreen": "Toggle fullscreen",
+  "Menu.Project": "Project repository",
+  "Menu.Community": "Community Discord",
+
+  "Settings.Scope.Title": "Global settings",
+  "Settings.Scope.Desc": "These defaults apply to every game unless a future per-game profile overrides them.",
+  "Settings.Scope.Badge": "ALL GAMES",
 
   "Library.SearchWatermark": "Search library…",
   "Library.AddFolder": "＋ Add folder",

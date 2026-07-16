@@ -17,15 +17,11 @@ SPDX-License-Identifier: GPL-2.0-or-later
         Icon="avares://SharpEmu.GUI/Assets/SharpEmu.ico"
         KeyDown="OnKeyDown">
 
-  <Grid x:Name="MainShell" RowDefinitions="*,Auto">
-    <Grid.ColumnDefinitions>
-      <ColumnDefinition Width="224" />
-      <ColumnDefinition Width="*" />
-    </Grid.ColumnDefinitions>
+  <Grid x:Name="MainShell" RowDefinitions="64,*,36">
 
     <!-- Selected-game backdrop: key art behind the main content, dimmed by
          a scrim so tiles and text stay readable. Fades on selection. -->
-    <Panel Grid.Column="1" Grid.Row="0" ClipToBounds="True">
+    <Panel Grid.Row="1" ClipToBounds="True">
       <Image x:Name="BackdropImage" Stretch="UniformToFill" Opacity="0"
              HorizontalAlignment="Center" VerticalAlignment="Center">
         <Image.Transitions>
@@ -45,66 +41,83 @@ SPDX-License-Identifier: GPL-2.0-or-later
       </Border>
     </Panel>
 
-    <!-- Persistent product/navigation rail. The upper inset shares native
-         title-bar space with the macOS traffic lights. -->
-    <Border x:Name="Sidebar" Grid.Column="0" Grid.Row="0" Grid.RowSpan="2" Classes="sidebar">
-      <Grid RowDefinitions="64,Auto,*,Auto">
-        <StackPanel x:Name="TitleBarContent" Grid.Row="0" Orientation="Horizontal" Spacing="10"
-                    Margin="16,0" VerticalAlignment="Center">
+    <!-- Desktop title/menu chrome. The left inset shares native title-bar
+         space with macOS traffic lights. -->
+    <Border x:Name="TitleBar" Grid.Row="0" Background="{StaticResource ChromeBrush}"
+            BorderBrush="{StaticResource CardBorderBrush}" BorderThickness="0,0,0,1">
+      <Grid ColumnDefinitions="Auto,*,Auto">
+        <StackPanel x:Name="TitleBarContent" Grid.Column="0" Orientation="Horizontal" Spacing="10"
+                    Margin="16,0,22,0" VerticalAlignment="Center">
           <Image Source="avares://SharpEmu.GUI/Assets/SharpEmu.ico" Width="28" Height="28"
                  RenderOptions.BitmapInterpolationMode="HighQuality"
                  AutomationProperties.AccessibilityView="Raw" />
           <TextBlock Text="SharpEmu" FontSize="17" FontWeight="Bold" VerticalAlignment="Center" />
+          <TextBlock x:Name="VersionText" Text="v0.0.1" FontSize="11"
+                     Foreground="{StaticResource FaintBrush}" VerticalAlignment="Center" />
         </StackPanel>
 
-        <StackPanel Grid.Row="1" Margin="12,24,12,0" Spacing="8"
-                    AutomationProperties.LandmarkType="Navigation">
-          <TextBlock x:Name="SidebarSectionTitle" Classes="navLabel" Text="WORKSPACE"
-                     Margin="14,0,0,6" />
-          <Button x:Name="LibraryTabButton" Classes="navItem active" Content="Library"
-                  ToolTip.Tip="Controller shortcut: L1 / LB"
-                  AutomationProperties.AutomationId="LibraryPageButton" />
-          <Button x:Name="OptionsTabButton" Classes="navItem" Content="Options"
-                  ToolTip.Tip="Controller shortcut: R1 / RB"
-                  AutomationProperties.AutomationId="OptionsPageButton" />
-        </StackPanel>
+        <Menu Grid.Column="1" Classes="mainMenu" VerticalAlignment="Center"
+              AutomationProperties.LandmarkType="Navigation">
+          <MenuItem x:Name="FileMenuItem" Header="File">
+            <MenuItem x:Name="MenuOpenFile" Header="Open file…" />
+            <MenuItem x:Name="MenuAddFolder" Header="Add folder…" />
+            <MenuItem x:Name="MenuRescan" Header="Rescan library" />
+          </MenuItem>
+          <MenuItem x:Name="ViewMenuItem" Header="View">
+            <MenuItem x:Name="MenuLibrary" Header="Library" />
+            <MenuItem x:Name="MenuSettings" Header="Settings" />
+            <Separator />
+            <MenuItem x:Name="MenuConsole" Header="Console" />
+            <MenuItem x:Name="MenuFullscreen" Header="Toggle fullscreen" InputGesture="F11" />
+          </MenuItem>
+          <MenuItem x:Name="HelpMenuItem" Header="Help">
+            <MenuItem x:Name="MenuGithub" Header="Project repository" />
+            <MenuItem x:Name="MenuDiscord" Header="Community Discord" />
+          </MenuItem>
+        </Menu>
 
-        <Border Grid.Row="3" Classes="card" Margin="16,16,16,20" Padding="14">
-          <StackPanel Spacing="6">
-            <TextBlock x:Name="BuildCardTitle" Text="EXPERIMENTAL BUILD" Classes="navLabel" />
-            <TextBlock x:Name="VersionText" Text="v0.0.1" FontSize="12" FontWeight="SemiBold"
-                       Foreground="{StaticResource TextBrush}" TextWrapping="Wrap" />
-            <TextBlock x:Name="BuildCardDescription"
-                       Text="PS5 emulation is still under active development."
-                       FontSize="11" Foreground="{StaticResource MutedBrush}" TextWrapping="Wrap" />
-          </StackPanel>
+        <Border Grid.Column="2" Classes="pill" Margin="16,0" VerticalAlignment="Center">
+          <TextBlock x:Name="BuildCardTitle" Text="EXPERIMENTAL BUILD" Classes="navLabel" />
         </Border>
       </Grid>
     </Border>
 
     <!-- Main content -->
-    <Grid Grid.Column="1" Grid.Row="0" Margin="32,0,32,20" RowDefinitions="Auto,*,Auto,Auto"
+    <Grid Grid.Row="1" Margin="28,0,28,20" RowDefinitions="Auto,*,Auto,Auto"
           MaxWidth="1440" HorizontalAlignment="Stretch">
 
-      <!-- Contextual command header doubles as the draggable title region. -->
-      <Grid x:Name="TitleBar" Grid.Row="0" MinHeight="82" ColumnDefinitions="Auto,20,*"
-            Margin="0,0,0,14">
-        <TextBlock x:Name="PageTitleText" Grid.Column="0" Text="Library" FontSize="28"
-                   FontWeight="Bold" VerticalAlignment="Center"
-                   AutomationProperties.HeadingLevel="1" />
+      <!-- Compact emulator command bar: workspace switching remains visible,
+           while library-only commands disappear in settings. -->
+      <Grid Grid.Row="0" MinHeight="76" ColumnDefinitions="Auto,*" Margin="0,0,0,12">
+        <StackPanel Grid.Column="0" Spacing="2" VerticalAlignment="Center">
+          <TextBlock x:Name="PageTitleText" Text="Library" FontSize="26" FontWeight="Bold"
+                     AutomationProperties.HeadingLevel="1" />
+          <TextBlock x:Name="PageSubtitleText" Text="Browse, inspect, and launch installed games."
+                     FontSize="12" Foreground="{StaticResource MutedBrush}" />
+        </StackPanel>
 
-        <WrapPanel Grid.Column="2" x:Name="LibraryToolbar" Orientation="Horizontal"
-                   HorizontalAlignment="Right" VerticalAlignment="Center">
-          <TextBox x:Name="SearchBox" Watermark="Search library…" Width="260" Margin="4,0"
-                   VerticalAlignment="Center" AutomationProperties.Name="Search library"
-                   AutomationProperties.HelpText="Filter games by title or title ID."
-                   AutomationProperties.AutomationId="LibrarySearchBox" />
-          <Button x:Name="AddFolderButton" Classes="ghost" Content="＋ Add folder" Margin="4,0"
-                  VerticalAlignment="Center" AutomationProperties.AutomationId="AddGameFolderButton" />
-          <Button x:Name="RescanButton" Classes="ghost" Content="⟳ Rescan" Margin="4,0"
-                  VerticalAlignment="Center" AutomationProperties.AutomationId="RescanLibraryButton" />
-          <Button x:Name="OpenFileButton" Classes="ghost" Content="Open file…" Margin="4,0"
-                  VerticalAlignment="Center" AutomationProperties.AutomationId="OpenExecutableButton" />
+        <WrapPanel Grid.Column="1" Orientation="Horizontal" HorizontalAlignment="Right"
+                   VerticalAlignment="Center" AutomationProperties.LandmarkType="Navigation">
+          <Button x:Name="LibraryTabButton" Classes="toolbarNav active" Content="Library" Margin="3,0"
+                  ToolTip.Tip="Controller shortcut: L1 / LB"
+                  AutomationProperties.AutomationId="LibraryPageButton" />
+          <Button x:Name="OptionsTabButton" Classes="toolbarNav" Content="Settings" Margin="3,0,10,0"
+                  ToolTip.Tip="Controller shortcut: R1 / RB"
+                  AutomationProperties.AutomationId="OptionsPageButton" />
+          <StackPanel x:Name="LibraryToolbar" Orientation="Horizontal">
+            <TextBox x:Name="SearchBox" Watermark="Search library…" Width="240" Margin="3,0"
+                     VerticalAlignment="Center" AutomationProperties.Name="Search library"
+                     AutomationProperties.HelpText="Filter games by title or title ID."
+                     AutomationProperties.AutomationId="LibrarySearchBox" />
+            <Button x:Name="AddFolderButton" Classes="ghost compact" Content="＋ Add" Margin="3,0"
+                    VerticalAlignment="Center" AutomationProperties.AutomationId="AddGameFolderButton" />
+            <Button x:Name="RescanButton" Classes="ghost compact" Content="⟳" Margin="3,0"
+                    ToolTip.Tip="Rescan library" VerticalAlignment="Center"
+                    AutomationProperties.Name="Rescan library"
+                    AutomationProperties.AutomationId="RescanLibraryButton" />
+            <Button x:Name="OpenFileButton" Classes="ghost compact" Content="Open file…" Margin="3,0"
+                    VerticalAlignment="Center" AutomationProperties.AutomationId="OpenExecutableButton" />
+          </StackPanel>
         </WrapPanel>
       </Grid>
 
@@ -193,12 +206,23 @@ SPDX-License-Identifier: GPL-2.0-or-later
           </StackPanel>
         </Panel>
 
-        <!-- Options page: sub-tabs so future categories (Graphics, …) slot
-             in next to General. Card-grouped sections match the visual
-             language used by the console panel and launch bar below. -->
-        <Grid x:Name="OptionsPage" IsVisible="False"
+        <!-- Settings workspace: PCSX2-inspired category rail with an explicit
+             global scope. Debug/environment controls remain a separate category. -->
+        <Grid x:Name="OptionsPage" IsVisible="False" RowDefinitions="Auto,*"
+              MaxWidth="1120" HorizontalAlignment="Center"
               AutomationProperties.LandmarkType="Main">
-          <TabControl>
+          <Grid Grid.Row="0" ColumnDefinitions="*,Auto" Margin="0,4,0,14">
+            <StackPanel Spacing="3">
+              <TextBlock x:Name="SettingsScopeTitle" Text="Global settings" FontSize="18" FontWeight="SemiBold" />
+              <TextBlock x:Name="SettingsScopeDescription"
+                         Text="These defaults apply to every game unless a future per-game profile overrides them."
+                         FontSize="12" Foreground="{StaticResource MutedBrush}" TextWrapping="Wrap" />
+            </StackPanel>
+            <Border Grid.Column="1" Classes="pill" VerticalAlignment="Center" Margin="16,0,0,0">
+              <TextBlock x:Name="SettingsScopeBadge" Text="ALL GAMES" Classes="navLabel" />
+            </Border>
+          </Grid>
+          <TabControl Grid.Row="1" TabStripPlacement="Left">
             <TabItem x:Name="GeneralTabItem" Header="General" FontSize="15">
               <ScrollViewer HorizontalScrollBarVisibility="Disabled">
                 <StackPanel Margin="0,14,0,16" Spacing="16" MaxWidth="900" HorizontalAlignment="Stretch">
@@ -533,7 +557,7 @@ SPDX-License-Identifier: GPL-2.0-or-later
       </Border>
 
       <!-- Selected-game inspector and primary actions. -->
-      <Border Grid.Row="3" Classes="actionPanel" Margin="0,16,0,0" Padding="18">
+      <Border x:Name="SelectedGamePanel" Grid.Row="3" Classes="actionPanel" Margin="0,16,0,0" Padding="18">
         <StackPanel Spacing="14">
           <Grid ColumnDefinitions="Auto,*,Auto">
 
@@ -606,7 +630,7 @@ SPDX-License-Identifier: GPL-2.0-or-later
     </Grid>
 
     <!-- Status bar -->
-    <Grid x:Name="StatusBar" Grid.Column="1" Grid.Row="1" Height="36" Background="{StaticResource ChromeBrush}"
+    <Grid x:Name="StatusBar" Grid.Row="2" Height="36" Background="{StaticResource ChromeBrush}"
           ColumnDefinitions="*,Auto">
       <TextBlock x:Name="EmulatorPathText" Grid.Column="0" Text="Emulator: locating…" FontSize="11"
                  Foreground="{StaticResource FaintBrush}" VerticalAlignment="Center" Margin="16,0"
