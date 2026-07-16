@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 using Avalonia;
+using Avalonia.Automation;
 using Avalonia.Collections;
 using Avalonia.Controls;
 using Avalonia.Input;
@@ -17,6 +18,7 @@ using SharpEmu.HLE.Host.Windows;
 using SharpEmu.Logging;
 using System.Collections.Concurrent;
 using System.Collections.ObjectModel;
+using System.ComponentModel;
 using System.Diagnostics;
 using System.Reflection;
 using System.Text.Json;
@@ -77,10 +79,28 @@ public partial class MainWindow : Window
     private long _navRightNextAt;
     private long _navUpNextAt;
     private long _navDownNextAt;
+    private bool _inputSettingsInitialized;
+    private WindowState _windowStateBeforeFullScreen = WindowState.Normal;
 
     public MainWindow()
     {
         InitializeComponent();
+
+        // Fullscreen recovery must win even when the focused child handles a
+        // key first (for example, an open menu or editable field).
+        AddHandler(
+            KeyDownEvent,
+            OnWindowKeyDown,
+            RoutingStrategies.Tunnel,
+            handledEventsToo: true);
+
+        // Extended client chrome shares the macOS title bar with the traffic
+        // lights. Leave their native hit targets clear while keeping the
+        // compact inset used by Windows and Linux.
+        if (OperatingSystem.IsMacOS())
+        {
+            TitleBarContent.Margin = new Thickness(76, 0, 22, 0);
+        }
 
         GameList.ItemsSource = _visibleGames;
         ConsoleList.ItemsSource = _consoleLines;
@@ -101,19 +121,22 @@ public partial class MainWindow : Window
         GameList.DoubleTapped += (_, _) => LaunchSelected();
         SearchBox.TextChanged += (_, _) => RefreshVisibleGames();
         ConsoleSearchBox.TextChanged += (_, _) => RefreshVisibleConsoleLines();
-        AddFolderButton.Click += async (_, _) => await AddFolderAsync();
         EmptyAddFolderButton.Click += async (_, _) => await AddFolderAsync();
-        RescanButton.Click += async (_, _) => await RescanLibraryAsync();
-        OpenFileButton.Click += async (_, _) => await OpenFileAsync();
         LaunchButton.Click += (_, _) => LaunchSelected();
-        StopButton.Click += (_, _) => _emulator?.Stop();
         ClearLogButton.Click += (_, _) => { _consoleLines.Clear(); _allConsoleLines.Clear(); };
         StopButton.Click += (_, _) => StopEmulator();
-        ClearLogButton.Click += (_, _) => _consoleLines.Clear();
         CopyLogButton.Click += async (_, _) => await CopyConsoleAsync();
         DetachConsoleButton.Click += (_, _) => ShowConsoleWindow();
         LibraryTabButton.Click += (_, _) => SetActivePage(0);
         OptionsTabButton.Click += (_, _) => SetActivePage(1);
+        MenuLibrary.Click += (_, _) => SetActivePage(0);
+        MenuSettings.Click += (_, _) => SetActivePage(1);
+        MenuOpenFile.Click += async (_, _) => await OpenFileAsync();
+        MenuAddFolder.Click += async (_, _) => await AddFolderAsync();
+        MenuRescan.Click += async (_, _) => await RescanLibraryAsync();
+        MenuConsole.Click += (_, _) => ConsoleToggle.IsChecked = ConsoleToggle.IsChecked != true;
+        MenuFullscreen.Click += (_, _) => ToggleFullScreen();
+        ExitFullscreenButton.Click += (_, _) => ExitFullScreen();
         ConsoleToggle.IsCheckedChanged += (_, _) => ConsolePanel.IsVisible = ConsoleToggle.IsChecked == true && _consoleWindow is null;
 
         // The settings page edits _settings live, so a launch started while
@@ -154,6 +177,21 @@ public partial class MainWindow : Window
             SetEnvironmentToggle("SHARPEMU_LOG_IO", EnvLogIoToggle.IsChecked == true);
         EnvLogNpToggle.IsCheckedChanged += (_, _) =>
             SetEnvironmentToggle("SHARPEMU_LOG_NP", EnvLogNpToggle.IsChecked == true);
+        ResetInputMappingsButton.Click += (_, _) => ResetInputMappings();
+        ControllerInputModeButton.Click += (_, _) => SetInputMode(showKeyboard: false);
+        KeyboardInputModeButton.Click += (_, _) => SetInputMode(showKeyboard: true);
+        StickDeadzoneBox.ValueChanged += (_, _) => UpdateInputProfile(profile =>
+            profile.StickDeadzone = (int)(StickDeadzoneBox.Value ?? 10));
+        SwapSticksToggle.IsCheckedChanged += (_, _) => UpdateInputProfile(profile =>
+            profile.SwapSticks = SwapSticksToggle.IsChecked == true);
+        InvertLeftXToggle.IsCheckedChanged += (_, _) => UpdateInputProfile(profile =>
+            profile.InvertLeftX = InvertLeftXToggle.IsChecked == true);
+        InvertLeftYToggle.IsCheckedChanged += (_, _) => UpdateInputProfile(profile =>
+            profile.InvertLeftY = InvertLeftYToggle.IsChecked == true);
+        InvertRightXToggle.IsCheckedChanged += (_, _) => UpdateInputProfile(profile =>
+            profile.InvertRightX = InvertRightXToggle.IsChecked == true);
+        InvertRightYToggle.IsCheckedChanged += (_, _) => UpdateInputProfile(profile =>
+            profile.InvertRightY = InvertRightYToggle.IsChecked == true);
         LanguageBox.SelectionChanged += (_, _) => OnLanguageChanged();
 
         GameList.AddHandler(ContextRequestedEvent, OnGameContextRequested, RoutingStrategies.Tunnel);
@@ -178,23 +216,10 @@ public partial class MainWindow : Window
         _gamepadTimer.Start();
 
 
-        GithubButton.Click += (_, _) =>
-        {
-            Process.Start(new ProcessStartInfo
-            {
-                FileName = "https://github.com/sharpemu/sharpemu",
-                UseShellExecute = true
-            });
-        };
-
-        DiscordButton.Click += (_, _) =>
-        {
-            Process.Start(new ProcessStartInfo
-            {
-                FileName = "https://discord.com/invite/6GejPEDqpc",
-                UseShellExecute = true
-            });
-        };
+        GithubButton.Click += (_, _) => OpenExternalUrl("https://github.com/sharpemu/sharpemu");
+        DiscordButton.Click += (_, _) => OpenExternalUrl("https://discord.com/invite/6GejPEDqpc");
+        MenuGithub.Click += (_, _) => OpenExternalUrl("https://github.com/sharpemu/sharpemu");
+        MenuDiscord.Click += (_, _) => OpenExternalUrl("https://discord.com/invite/6GejPEDqpc");
     }
 
     /// <summary>
@@ -216,8 +241,14 @@ public partial class MainWindow : Window
         _activePageIndex = index;
         SetActiveClass(LibraryTabButton, index == 0);
         SetActiveClass(OptionsTabButton, index == 1);
+        PageTitleText.Text = Localization.Instance.Get(
+            index == 0 ? "Page.Library" : "Page.Options");
+        PageSubtitleText.Text = Localization.Instance.Get(
+            index == 0 ? "Page.Library.Desc" : "Page.Options.Desc");
         LibraryPage.IsVisible = index == 0;
-        LibraryToolbar.IsVisible = index == 0;
+        SearchBox.IsVisible = index == 0;
+        SelectedGamePanel.IsVisible = index == 0;
+        BackdropImage.IsVisible = index == 0;
         OptionsPage.IsVisible = index == 1;
     }
 
@@ -234,6 +265,16 @@ public partial class MainWindow : Window
         {
             button.Classes.Remove("active");
         }
+    }
+
+    private void SetInputMode(bool showKeyboard)
+    {
+        ControllerInputPanel.IsVisible = !showKeyboard;
+        KeyboardInputPanel.IsVisible = showKeyboard;
+        ControllerInputModeButton.IsChecked = !showKeyboard;
+        KeyboardInputModeButton.IsChecked = showKeyboard;
+        SetActiveClass(ControllerInputModeButton, !showKeyboard);
+        SetActiveClass(KeyboardInputModeButton, showKeyboard);
     }
 
     // ---- Controller navigation ----
@@ -355,8 +396,8 @@ public partial class MainWindow : Window
 
     private int TilesPerRow()
     {
-        // Tile footprint: 128 content + 20 item padding + 10 item margin.
-        const double TileOuterWidth = 158;
+        // Tile footprint: 168 content + 16 item padding + 8 item margin.
+        const double TileOuterWidth = 192;
         var width = GameList.Bounds.Width;
         return width > TileOuterWidth ? (int)(width / TileOuterWidth) : 1;
     }
@@ -379,6 +420,7 @@ public partial class MainWindow : Window
         PopulateLanguageBox();
         ApplyLocalization();
         ApplySettingsToControls();
+        _inputSettingsInitialized = true;
         LocateEmulator();
         UpdateDiscordPresence();
         if (_settings.CheckForUpdatesOnStartup)
@@ -420,11 +462,28 @@ public partial class MainWindow : Window
 
         LibraryTabButton.Content = loc.Get("Page.Library");
         OptionsTabButton.Content = loc.Get("Page.Options");
+        PageTitleText.Text = loc.Get(_activePageIndex == 0 ? "Page.Library" : "Page.Options");
+        PageSubtitleText.Text = loc.Get(_activePageIndex == 0 ? "Page.Library.Desc" : "Page.Options.Desc");
+        BuildCardTitle.Text = loc.Get("Sidebar.BuildTitle");
+        SettingsScopeTitle.Text = loc.Get("Settings.Scope.Title");
+        SettingsScopeDescription.Text = loc.Get("Settings.Scope.Desc");
+        SettingsScopeBadge.Text = loc.Get("Settings.Scope.Badge");
+
+        FileMenuItem.Header = loc.Get("Menu.File");
+        ViewMenuItem.Header = loc.Get("Menu.View");
+        HelpMenuItem.Header = loc.Get("Menu.Help");
+        MenuOpenFile.Header = loc.Get("Library.OpenFile");
+        MenuAddFolder.Header = loc.Get("Library.AddFolder");
+        MenuRescan.Header = loc.Get("Library.Rescan");
+        MenuLibrary.Header = loc.Get("Page.Library");
+        MenuSettings.Header = loc.Get("Page.Options");
+        MenuConsole.Header = loc.Get("Launch.Console");
+        MenuFullscreen.Header = loc.Get("Menu.Fullscreen");
+        ExitFullscreenButton.Content = $"{loc.Get("Menu.ExitFullscreen")}   Esc";
+        MenuGithub.Header = loc.Get("Menu.Project");
+        MenuDiscord.Header = loc.Get("Menu.Community");
 
         SearchBox.Watermark = loc.Get("Library.SearchWatermark");
-        AddFolderButton.Content = loc.Get("Library.AddFolder");
-        RescanButton.Content = loc.Get("Library.Rescan");
-        OpenFileButton.Content = loc.Get("Library.OpenFile");
 
         CtxLaunch.Header = loc.Get("Library.Context.Launch");
         CtxOpenFolder.Header = loc.Get("Library.Context.OpenFolder");
@@ -436,7 +495,31 @@ public partial class MainWindow : Window
         LoadingStateText.Text = loc.Get("Library.Loading");
 
         GeneralTabItem.Header = loc.Get("Options.General");
+        ControlsTabItem.Header = loc.Get("Options.Controls");
         EnvTabItem.Header = loc.Get("Options.Env.Tab");
+        ControlsPageTitle.Text = loc.Get("Input.Title");
+        ControlsPageDescription.Text = loc.Get("Input.Description");
+        ResetInputMappingsButton.Content = loc.Get("Input.Reset");
+        InputDeviceModeLabel.Text = loc.Get("Input.Device.Title");
+        ControllerInputModeButton.Content = loc.Get("Input.Device.Controller");
+        KeyboardInputModeButton.Content = loc.Get("Input.Device.Keyboard");
+        ControllerDiagramTitle.Text = loc.Get("Input.ControllerDiagram.Title");
+        ControllerDiagramDescription.Text = loc.Get("Input.ControllerDiagram.Desc");
+        AutomationProperties.SetName(ControllerImage, loc.Get("Input.ControllerDiagram.Alt"));
+        ControllerBindingsTitle.Text = loc.Get("Input.Controller.Title");
+        ControllerBindingsDescription.Text = loc.Get("Input.Controller.Desc");
+        StickSettingsTitle.Text = loc.Get("Input.Sticks.Title");
+        StickDeadzoneLabel.Text = loc.Get("Input.Deadzone.Label");
+        StickDeadzoneDescription.Text = loc.Get("Input.Deadzone.Desc");
+        SwapSticksLabel.Text = loc.Get("Input.SwapSticks");
+        InvertLeftXLabel.Text = loc.Get("Input.InvertLeftX");
+        InvertLeftYLabel.Text = loc.Get("Input.InvertLeftY");
+        InvertRightXLabel.Text = loc.Get("Input.InvertRightX");
+        InvertRightYLabel.Text = loc.Get("Input.InvertRightY");
+        KeyboardBindingsTitle.Text = loc.Get("Input.Keyboard.Title");
+        KeyboardBindingsDescription.Text = loc.Get("Input.Keyboard.Desc");
+        KeyboardSticksTitle.Text = loc.Get("Input.KeyboardSticks.Title");
+        KeyboardSticksDescription.Text = loc.Get("Input.KeyboardSticks.Desc");
         EnvSectionTitle.Text = loc.Get("Options.Section.Environment");
         EnvDesc.Text = loc.Get("Options.Env.Desc");
         EnvBthidDesc.Text = loc.Get("Options.Env.Bthid.Desc");
@@ -491,7 +574,20 @@ public partial class MainWindow : Window
         AutoUpdateLabel.Text = loc.Get("Updater.Auto.Label");
         AutoUpdateDesc.Text = loc.Get("Updater.Auto.Desc");
 
-        foreach (var toggle in new[] { StrictToggle, LogToFileToggle, OverrideLogFileToggle, TitleMusicToggle, DiscordToggle, AutoUpdateToggle })
+        foreach (var toggle in new[]
+        {
+            StrictToggle,
+            LogToFileToggle,
+            OverrideLogFileToggle,
+            TitleMusicToggle,
+            DiscordToggle,
+            SwapSticksToggle,
+            InvertLeftXToggle,
+            InvertLeftYToggle,
+            InvertRightXToggle,
+            InvertRightYToggle,
+            AutoUpdateToggle,
+        })
         {
             toggle.OnContent = loc.Get("Common.On");
             toggle.OffContent = loc.Get("Common.Off");
@@ -518,8 +614,63 @@ public partial class MainWindow : Window
         UpdateLabel.Text = loc.Get("Updater.Label");
         RefreshUpdateText();
 
+        PopulateInputBindingRows();
+        ApplyAccessibilityLabels();
+
         UpdateEmptyStateTexts();
         UpdateSelectedGameTexts();
+    }
+
+    private void ApplyAccessibilityLabels()
+    {
+        AutomationProperties.SetName(SearchBox, SearchBox.Watermark ?? string.Empty);
+        AutomationProperties.SetName(ConsoleSearchBox, ConsoleSearchBox.Watermark ?? string.Empty);
+        AutomationProperties.SetName(ExitFullscreenButton, Localization.Instance.Get("Menu.ExitFullscreen"));
+        AutomationProperties.SetName(GameList, LibraryTabButton.Content?.ToString() ?? string.Empty);
+
+        SetAccessibility(CpuEngineBox, CpuEngineLabel, CpuEngineDesc);
+        SetAccessibility(StrictToggle, StrictLabel, StrictDesc);
+        SetAccessibility(LogLevelBox, LogLevelLabel, LogLevelDesc);
+        SetAccessibility(TraceImportsBox, TraceImportsLabel, TraceImportsDesc);
+        SetAccessibility(LogToFileToggle, LogToFileLabel, LogToFileDesc);
+        SetAccessibility(
+            SelectLogFilePathButton,
+            LogFilePathLabel.Text,
+            LogFilePathText.Text);
+        SetAccessibility(OverrideLogFileToggle, OverrideLogFileLabel, OverrideLogFileDesc);
+        SetAccessibility(LanguageBox, LanguageLabel, LanguageDesc);
+        SetAccessibility(TitleMusicToggle, TitleMusicLabel, TitleMusicDesc);
+        SetAccessibility(DiscordToggle, DiscordLabel, DiscordDesc);
+        SetAccessibility(
+            ControllerInputModeButton,
+            ControllerInputModeButton.Content?.ToString() ?? string.Empty,
+            Localization.Instance.Get("Input.Device.Controller.Help"));
+        SetAccessibility(
+            KeyboardInputModeButton,
+            KeyboardInputModeButton.Content?.ToString() ?? string.Empty,
+            Localization.Instance.Get("Input.Device.Keyboard.Help"));
+        SetAccessibility(StickDeadzoneBox, StickDeadzoneLabel, StickDeadzoneDescription);
+        SetAccessibility(SwapSticksToggle, SwapSticksLabel.Text, ControlsPageDescription.Text);
+        SetAccessibility(InvertLeftXToggle, InvertLeftXLabel.Text, ControlsPageDescription.Text);
+        SetAccessibility(InvertLeftYToggle, InvertLeftYLabel.Text, ControlsPageDescription.Text);
+        SetAccessibility(InvertRightXToggle, InvertRightXLabel.Text, ControlsPageDescription.Text);
+        SetAccessibility(InvertRightYToggle, InvertRightYLabel.Text, ControlsPageDescription.Text);
+
+        SetAccessibility(EnvBthidToggle, "SHARPEMU_BTHID_UNAVAILABLE", EnvBthidDesc.Text);
+        SetAccessibility(EnvLoopGuardToggle, "SHARPEMU_DISABLE_IMPORT_LOOP_GUARD", EnvLoopGuardDesc.Text);
+        SetAccessibility(EnvVkValidationToggle, "SHARPEMU_VK_VALIDATION", EnvVkValidationDesc.Text);
+        SetAccessibility(EnvDumpSpirvToggle, "SHARPEMU_DUMP_SPIRV", EnvDumpSpirvDesc.Text);
+        SetAccessibility(EnvLogDirectMemoryToggle, "SHARPEMU_LOG_DIRECT_MEMORY", EnvLogDirectMemoryDesc.Text);
+        SetAccessibility(EnvLogNpToggle, "SHARPEMU_LOG_NP", EnvLogNpDesc.Text);
+    }
+
+    private static void SetAccessibility(Control control, TextBlock label, TextBlock description) =>
+        SetAccessibility(control, label.Text, description.Text);
+
+    private static void SetAccessibility(Control control, string? name, string? helpText)
+    {
+        AutomationProperties.SetName(control, name ?? string.Empty);
+        AutomationProperties.SetHelpText(control, helpText ?? string.Empty);
     }
 
     // ---- Discord Rich Presence ----
@@ -560,36 +711,72 @@ public partial class MainWindow : Window
         }
     }
 
-    private void OnKeyDown(object sender, KeyEventArgs args)
+    private void OnWindowKeyDown(object? sender, KeyEventArgs args)
     {
-        args.Handled = true;
-        switch (args.Key)
+        var isMacFullScreenShortcut = OperatingSystem.IsMacOS() &&
+            args.Key == Key.F &&
+            (args.KeyModifiers & (KeyModifiers.Control | KeyModifiers.Meta)) ==
+            (KeyModifiers.Control | KeyModifiers.Meta);
+
+        if (args.Key == Key.Escape && WindowState == WindowState.FullScreen)
         {
-            case Key.F11:
-                OnWindowFullScreen(this, new RoutedEventArgs());
-                break;
-            default:
-                args.Handled = false;
-                break;
+            ExitFullScreen();
+            args.Handled = true;
+        }
+        else if (args.Key == Key.F11 || isMacFullScreenShortcut)
+        {
+            ToggleFullScreen();
+            args.Handled = true;
         }
     }
 
-    private void OnWindowFullScreen(object sender, RoutedEventArgs args)
+    private void ToggleFullScreen()
     {
         if (WindowState == WindowState.FullScreen)
         {
-            WindowState = WindowState.Normal;
-            ExtendClientAreaChromeHints = ExtendClientAreaChromeHints.PreferSystemChrome;
-            TitleBar.IsVisible = true;
-            StatusBar.IsVisible = true;
+            ExitFullScreen();
         }
         else
         {
+            _windowStateBeforeFullScreen = WindowState == WindowState.Minimized
+                ? WindowState.Normal
+                : WindowState;
             WindowState = WindowState.FullScreen;
-            ExtendClientAreaChromeHints = ExtendClientAreaChromeHints.NoChrome;
-            TitleBar.IsVisible = false;
-            StatusBar.IsVisible = false;
         }
+    }
+
+    private void ExitFullScreen()
+    {
+        if (WindowState != WindowState.FullScreen)
+        {
+            return;
+        }
+
+        WindowState = _windowStateBeforeFullScreen;
+    }
+
+    private void UpdateFullScreenChrome()
+    {
+        var isFullScreen = WindowState == WindowState.FullScreen;
+        // Native macOS fullscreen owns the reveal-on-hover title bar. Keeping
+        // system chrome lets its close/minimize/fullscreen controls return
+        // when the pointer reaches the top; NoChrome explicitly removes them.
+        var preserveNativeMacChrome = isFullScreen && OperatingSystem.IsMacOS();
+        ExtendClientAreaChromeHints = isFullScreen && !preserveNativeMacChrome
+            ? ExtendClientAreaChromeHints.NoChrome
+            : ExtendClientAreaChromeHints.PreferSystemChrome;
+        TitleBar.IsVisible = !isFullScreen;
+        StatusBar.IsVisible = !isFullScreen;
+        ExitFullscreenButton.IsVisible = isFullScreen;
+    }
+
+    private static void OpenExternalUrl(string url)
+    {
+        Process.Start(new ProcessStartInfo
+        {
+            FileName = url,
+            UseShellExecute = true,
+        });
     }
 
     private void OnWindowClosing()
@@ -606,10 +793,26 @@ public partial class MainWindow : Window
 
     private void OnTitleBarPointerPressed(object? sender, PointerPressedEventArgs e)
     {
-        if (e.GetCurrentPoint(this).Properties.IsLeftButtonPressed)
+        if (e.GetCurrentPoint(this).Properties.IsLeftButtonPressed &&
+            !IsInteractiveTitleBarSource(e.Source))
         {
             BeginMoveDrag(e);
         }
+    }
+
+    private bool IsInteractiveTitleBarSource(object? source)
+    {
+        for (var visual = source as Visual;
+             visual is not null && visual != TitleBar;
+             visual = visual.GetVisualParent())
+        {
+            if (visual is InputElement { Focusable: true })
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     // ---- Settings ----
@@ -641,7 +844,125 @@ public partial class MainWindow : Window
         EnvLogDirectMemoryToggle.IsChecked = _settings.EnvironmentToggles.Contains("SHARPEMU_LOG_DIRECT_MEMORY");
         EnvLogIoToggle.IsChecked = _settings.EnvironmentToggles.Contains("SHARPEMU_LOG_IO");
         EnvLogNpToggle.IsChecked = _settings.EnvironmentToggles.Contains("SHARPEMU_LOG_NP");
+        ApplyInputProfileToControls();
         UpdateLogFilePathText();
+    }
+
+    private void ApplyInputProfileToControls()
+    {
+        var profile = _settings.InputProfile ??= HostInputProfile.CreateDefault();
+        profile.Normalize();
+        StickDeadzoneBox.Value = profile.StickDeadzone;
+        SwapSticksToggle.IsChecked = profile.SwapSticks;
+        InvertLeftXToggle.IsChecked = profile.InvertLeftX;
+        InvertLeftYToggle.IsChecked = profile.InvertLeftY;
+        InvertRightXToggle.IsChecked = profile.InvertRightX;
+        InvertRightYToggle.IsChecked = profile.InvertRightY;
+        PopulateInputBindingRows();
+    }
+
+    private void PopulateInputBindingRows()
+    {
+        var profile = _settings.InputProfile ??= HostInputProfile.CreateDefault();
+        profile.Normalize();
+        var loc = Localization.Instance;
+        var controllerChoices = HostInputProfile.SupportedButtons
+            .Select(button => new InputChoice((int)button, InputSourceButtonLabel(button)))
+            .ToArray();
+        ControllerBindingList.ItemsSource = HostInputProfile.SupportedButtons
+            .Select(target => new InputBindingRow(
+                InputButtonLabel(target),
+                controllerChoices,
+                (int)profile.GetControllerBinding(target),
+                value => UpdateInputProfile(current =>
+                    current.SetControllerBinding(target, (HostInputButton)value))))
+            .ToArray();
+
+        var keyboardChoices = CreateKeyboardChoices(loc);
+        KeyboardBindingList.ItemsSource = HostInputProfile.SupportedButtons
+            .Select(target => new InputBindingRow(
+                InputButtonLabel(target),
+                keyboardChoices,
+                profile.GetKeyboardBinding(target).FirstOrDefault(),
+                value => UpdateInputProfile(current =>
+                    current.SetPrimaryKeyboardBinding(target, value))))
+            .ToArray();
+
+        var axisKeyboardChoices = keyboardChoices.Where(choice => choice.Value != 0).ToArray();
+        KeyboardAxisBindingList.ItemsSource = new[]
+        {
+            new InputBindingRow(loc.Get("Input.Axis.LeftLeft"), axisKeyboardChoices, profile.LeftStickLeftKey,
+                value => UpdateInputProfile(current => current.LeftStickLeftKey = value)),
+            new InputBindingRow(loc.Get("Input.Axis.LeftRight"), axisKeyboardChoices, profile.LeftStickRightKey,
+                value => UpdateInputProfile(current => current.LeftStickRightKey = value)),
+            new InputBindingRow(loc.Get("Input.Axis.LeftUp"), axisKeyboardChoices, profile.LeftStickUpKey,
+                value => UpdateInputProfile(current => current.LeftStickUpKey = value)),
+            new InputBindingRow(loc.Get("Input.Axis.LeftDown"), axisKeyboardChoices, profile.LeftStickDownKey,
+                value => UpdateInputProfile(current => current.LeftStickDownKey = value)),
+            new InputBindingRow(loc.Get("Input.Axis.RightLeft"), axisKeyboardChoices, profile.RightStickLeftKey,
+                value => UpdateInputProfile(current => current.RightStickLeftKey = value)),
+            new InputBindingRow(loc.Get("Input.Axis.RightRight"), axisKeyboardChoices, profile.RightStickRightKey,
+                value => UpdateInputProfile(current => current.RightStickRightKey = value)),
+            new InputBindingRow(loc.Get("Input.Axis.RightUp"), axisKeyboardChoices, profile.RightStickUpKey,
+                value => UpdateInputProfile(current => current.RightStickUpKey = value)),
+            new InputBindingRow(loc.Get("Input.Axis.RightDown"), axisKeyboardChoices, profile.RightStickDownKey,
+                value => UpdateInputProfile(current => current.RightStickDownKey = value)),
+        };
+    }
+
+    private string InputButtonLabel(HostInputButton button) =>
+        Localization.Instance.Get($"Input.Button.{button}");
+
+    private string InputSourceButtonLabel(HostInputButton button)
+    {
+        var key = $"Input.Source.{button}";
+        var localized = Localization.Instance.Get(key);
+        return localized == key ? InputButtonLabel(button) : localized;
+    }
+
+    private static InputChoice[] CreateKeyboardChoices(Localization loc)
+    {
+        var choices = new List<InputChoice>
+        {
+            new(0, loc.Get("Input.Key.Unbound")),
+            new(0x26, loc.Get("Input.Key.ArrowUp")),
+            new(0x28, loc.Get("Input.Key.ArrowDown")),
+            new(0x25, loc.Get("Input.Key.ArrowLeft")),
+            new(0x27, loc.Get("Input.Key.ArrowRight")),
+        };
+        for (var key = 'A'; key <= 'Z'; key++)
+        {
+            choices.Add(new InputChoice(key, key.ToString()));
+        }
+
+        choices.Add(new InputChoice(0x0D, loc.Get("Input.Key.Enter")));
+        choices.Add(new InputChoice(0x1B, loc.Get("Input.Key.Escape")));
+        choices.Add(new InputChoice(0x09, loc.Get("Input.Key.Tab")));
+        choices.Add(new InputChoice(0x08, loc.Get("Input.Key.Backspace")));
+        return choices.ToArray();
+    }
+
+    private void UpdateInputProfile(Action<HostInputProfile> update)
+    {
+        if (!_inputSettingsInitialized)
+        {
+            return;
+        }
+
+        var profile = _settings.InputProfile ??= HostInputProfile.CreateDefault();
+        update(profile);
+        profile.Normalize();
+        _settings.Save();
+    }
+
+    private void ResetInputMappings()
+    {
+        _inputSettingsInitialized = false;
+        _settings.InputProfile = HostInputProfile.CreateDefault();
+        ApplyInputProfileToControls();
+        _inputSettingsInitialized = true;
+        _settings.Save();
+        StatusBarRight.Text = Localization.Instance.Get("Status.InputMappingsReset");
     }
 
     private async Task OnUpdateButtonAsync()
@@ -751,6 +1072,9 @@ public partial class MainWindow : Window
         LogFilePathText.Text = string.IsNullOrWhiteSpace(_settings.LogFilePath)
             ? Localization.Instance.Get("Options.LogFilePath.Default")
             : _settings.LogFilePath;
+        AutomationProperties.SetHelpText(
+            SelectLogFilePathButton,
+            LogFilePathText.Text ?? string.Empty);
     }
 
     private async Task SelectLogFilePathAsync()
@@ -1379,6 +1703,13 @@ public partial class MainWindow : Window
         base.OnPropertyChanged(change);
         if (change.Property == WindowStateProperty)
         {
+            if (WindowState is not WindowState.FullScreen and not WindowState.Minimized)
+            {
+                _windowStateBeforeFullScreen = WindowState;
+            }
+
+            UpdateFullScreenChrome();
+
             if (WindowState == WindowState.Minimized)
             {
                 _sndPreview.Pause();
@@ -1565,6 +1896,11 @@ public partial class MainWindow : Window
             _appliedEnvironmentVariables.Add(name);
         }
 
+        var inputProfile = _settings.InputProfile ??= HostInputProfile.CreateDefault();
+        Environment.SetEnvironmentVariable(
+            HostInputProfile.EnvironmentVariableName,
+            inputProfile.ToEnvironmentValue());
+
         var emulator = new EmulatorProcess();
         emulator.OutputReceived += (line, isError) => _pendingLines.Enqueue((line, isError));
         emulator.Exited += code => Dispatcher.UIThread.Post(() => OnEmulatorExited(code));
@@ -1683,7 +2019,7 @@ public partial class MainWindow : Window
     {
         LaunchButton.IsEnabled = !_isRunning && GameList.SelectedItem is GameEntry;
         StopButton.IsEnabled = _isRunning;
-        OpenFileButton.IsEnabled = !_isRunning;
+        MenuOpenFile.IsEnabled = !_isRunning;
     }
 
     // ---- Console ----
@@ -1924,5 +2260,47 @@ public partial class MainWindow : Window
             ConsolePanel.IsVisible = true;
         };
         _consoleWindow.Show(this);
+    }
+
+    private sealed record InputChoice(int Value, string Label);
+
+    private sealed class InputBindingRow : INotifyPropertyChanged
+    {
+        private readonly Action<int> _selectionChanged;
+        private InputChoice? _selectedChoice;
+
+        public InputBindingRow(
+            string label,
+            IReadOnlyList<InputChoice> choices,
+            int selectedValue,
+            Action<int> selectionChanged)
+        {
+            Label = label;
+            Choices = choices;
+            _selectionChanged = selectionChanged;
+            _selectedChoice = choices.FirstOrDefault(choice => choice.Value == selectedValue) ?? choices[0];
+        }
+
+        public event PropertyChangedEventHandler? PropertyChanged;
+
+        public string Label { get; }
+
+        public IReadOnlyList<InputChoice> Choices { get; }
+
+        public InputChoice? SelectedChoice
+        {
+            get => _selectedChoice;
+            set
+            {
+                if (value is null || Equals(_selectedChoice, value))
+                {
+                    return;
+                }
+
+                _selectedChoice = value;
+                PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(SelectedChoice)));
+                _selectionChanged(value.Value);
+            }
+        }
     }
 }

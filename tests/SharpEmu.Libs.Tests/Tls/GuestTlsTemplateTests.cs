@@ -6,6 +6,7 @@ using Xunit;
 
 namespace SharpEmu.Libs.Tests.Tls;
 
+[Collection("Guest TLS state")]
 public sealed class GuestTlsTemplateTests
 {
     [Fact]
@@ -22,6 +23,28 @@ public sealed class GuestTlsTemplateTests
                 alignment: 0x10);
 
             Assert.Equal(0x1870UL, staticOffset);
+            Assert.True(staticOffset <= GuestTlsTemplate.StartupStaticTlsReservation);
+        }
+        finally
+        {
+            GuestTlsTemplate.Reset();
+        }
+    }
+
+    [Fact]
+    public void StartupReservationAcceptsGrandTheftAutoVStaticTlsSpan()
+    {
+        try
+        {
+            GuestTlsTemplate.Reset();
+
+            var staticOffset = GuestTlsTemplate.RegisterModule(
+                moduleId: 1,
+                initImage: new byte[0x20],
+                memorySize: 0x13570,
+                alignment: 0x10);
+
+            Assert.Equal(0x13570UL, staticOffset);
             Assert.True(staticOffset <= GuestTlsTemplate.StartupStaticTlsReservation);
         }
         finally

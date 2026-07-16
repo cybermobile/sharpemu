@@ -15,9 +15,9 @@ namespace SharpEmu.HLE;
 public static class GuestTlsTemplate
 {
     // Must match CpuDispatcher/DirectExecutionBackend's mapped prefix. PS5
-    // modules can require more than one host page of Variant II static TLS;
-    // Dreaming Sarah's startup image, for example, reaches 0x1870 bytes.
-    public const ulong StartupStaticTlsReservation = 0x10000UL;
+    // modules can require substantial Variant II static TLS; Grand Theft Auto V's
+    // main image alone reaches 0x13570 bytes below the thread pointer.
+    public const ulong StartupStaticTlsReservation = 0x0002_0000UL;
     private static readonly object _gate = new();
     private static readonly SortedDictionary<ulong, ModuleTemplate> _modules = new();
     private static readonly Dictionary<ulong, ThreadDtv> _threadDtvs = new();

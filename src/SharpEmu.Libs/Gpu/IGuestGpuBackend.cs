@@ -150,6 +150,23 @@ internal interface IGuestGpuBackend
         uint threadCountY = uint.MaxValue,
         uint threadCountZ = uint.MaxValue);
 
+    /// <summary>
+    /// Enqueues a ranged GDS fill after prior work on the active guest queue.
+    /// Returns zero when no presenter queue is available.
+    /// </summary>
+    long SubmitGdsClear(uint offsetDwords, uint countDwords, uint value);
+
+    /// <summary>
+    /// Enqueues a ranged GDS read after prior work on the active guest queue.
+    /// The completion callback runs inline on the backend's render loop, so it
+    /// must not block; exceptions it throws are logged and swallowed.
+    /// Returns zero when no presenter queue is available.
+    /// </summary>
+    long SubmitGdsRead(
+        uint offsetDwords,
+        uint countDwords,
+        Action<ReadOnlyMemory<uint>> completion);
+
     bool TrySubmitGuestImage(
         ulong address,
         uint width,

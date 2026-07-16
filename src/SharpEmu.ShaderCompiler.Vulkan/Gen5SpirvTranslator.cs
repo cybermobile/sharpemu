@@ -222,6 +222,7 @@ public static partial class Gen5SpirvTranslator
         private readonly uint _localSizeZ;
         private readonly int _globalBufferBase;
         private readonly int _totalGlobalBufferCount;
+        private readonly int _gdsBufferIndex;
         private readonly int _imageBindingBase;
         private readonly int _initialScalarBufferIndex;
         private readonly uint _pixelInputEnable;
@@ -262,6 +263,7 @@ public static partial class Gen5SpirvTranslator
         private uint _reachedPixelExport;
         private uint _programCounter;
         private uint _programActive;
+        private uint _computeInvocationInBounds;
         private uint _iterationGuard;
         private uint _globalBuffers;
         private uint _gfx10BufferFormatTable;
@@ -283,6 +285,7 @@ public static partial class Gen5SpirvTranslator
         private uint _waveMaskScratch;
         private uint _waveMaskScratchElementPointer;
         private uint _waveBroadcastScratch;
+        private uint _gdsAtomicResult;
         private bool _waveScratchInLds;
         private uint _glsl;
 
@@ -344,9 +347,12 @@ public static partial class Gen5SpirvTranslator
             _localSizeY = localSizeY;
             _localSizeZ = localSizeZ;
             _globalBufferBase = globalBufferBase;
-            _totalGlobalBufferCount = totalGlobalBufferCount < 0
+            var guestGlobalBufferCount = totalGlobalBufferCount < 0
                 ? evaluation.GlobalMemoryBindings.Count
                 : totalGlobalBufferCount;
+            _gdsBufferIndex = UsesGds() ? guestGlobalBufferCount : -1;
+            _totalGlobalBufferCount = guestGlobalBufferCount +
+                (_gdsBufferIndex >= 0 ? 1 : 0);
             _imageBindingBase = imageBindingBase;
             _initialScalarBufferIndex = initialScalarBufferIndex;
             _pixelInputEnable = pixelInputEnable;
@@ -368,6 +374,18 @@ public static partial class Gen5SpirvTranslator
         {
             shader = default!;
             error = string.Empty;
+            if (_stage != Gen5SpirvStage.Compute && UsesGds())
+            {
+                error = "GDS instructions are currently supported only in compute shaders";
+                return false;
+            }
+
+            if (UsesGds() && _waveLaneCount == 64 && !_emulateWave64)
+            {
+                error = "wave64 GDS currently requires exactly 64 local invocations";
+                return false;
+            }
+
             try
             {
                 if (Environment.GetEnvironmentVariable(
@@ -651,7 +669,8 @@ public static partial class Gen5SpirvTranslator
                     attributeCount,
                     _stage == Gen5SpirvStage.Vertex
                         ? _evaluation.VertexInputs ?? []
-                        : []);
+                        : [],
+                    _gdsBufferIndex >= 0);
                 return true;
             }
             catch (Exception exception)
@@ -692,7 +711,7 @@ public static partial class Gen5SpirvTranslator
                     _module.AddCapability(SpirvCapability.GroupNonUniformVote);
                 }
 
-                if (UsesSubgroupBroadcast() || UsesWaveControl())
+                if (UsesSubgroupBroadcast() || UsesWaveControl() || UsesGds())
                 {
                     _module.AddCapability(SpirvCapability.GroupNonUniformBallot);
                 }
@@ -764,6 +783,10 @@ public static partial class Gen5SpirvTranslator
                 _privateBoolPointer,
                 SpirvStorageClass.Private,
                 _module.ConstantBool(true));
+            _computeInvocationInBounds = _module.AddGlobalVariable(
+                _privateBoolPointer,
+                SpirvStorageClass.Private,
+                _module.ConstantBool(true));
             if (_maxDispatcherSteps > 0)
             {
                 _iterationGuard = _module.AddGlobalVariable(
@@ -783,9 +806,15 @@ public static partial class Gen5SpirvTranslator
             _interfaces.Add(_reachedPixelExport);
             _interfaces.Add(_programCounter);
             _interfaces.Add(_programActive);
+            _interfaces.Add(_computeInvocationInBounds);
             _module.AddName(_scalarRegisters, "sgpr");
             _module.AddName(_vectorRegisters, "vgpr");
             _module.AddName(_packedHalfRegisters, "vgprPackedHalf");
+            _module.AddName(_exec, "exec");
+            _module.AddName(_programActive, "programActive");
+            _module.AddName(
+                _computeInvocationInBounds,
+                "computeInvocationInBounds");
 
             var runtimeBufferBiasCount =
                 _globalBufferBase + _evaluation.GlobalMemoryBindings.Count;
@@ -953,6 +982,16 @@ public static partial class Gen5SpirvTranslator
             _module.AddDecoration(_globalBuffers, SpirvDecoration.DescriptorSet, 0);
             _module.AddDecoration(_globalBuffers, SpirvDecoration.Binding, 0);
             _interfaces.Add(_globalBuffers);
+
+            if (UsesGds())
+            {
+                _gdsAtomicResult = _module.AddGlobalVariable(
+                    _privateUintPointer,
+                    SpirvStorageClass.Private,
+                    UInt(0));
+                _module.AddName(_gdsAtomicResult, "gdsAtomicResult");
+                _interfaces.Add(_gdsAtomicResult);
+            }
         }
 
         private void DeclareImages()
@@ -1443,7 +1482,18 @@ public static partial class Gen5SpirvTranslator
                         componentInBounds);
                 }
 
-                Store(_programActive, invocationInBounds);
+                Store(_computeInvocationInBounds, invocationInBounds);
+                // Exact wave64 emulation bridges two host subgroups with
+                // workgroup barriers. Every host invocation must therefore
+                // remain in the dispatcher, including the clipped lanes of a
+                // final partial guest dispatch. Effective EXEC masks those
+                // lanes from guest-visible work while preserving uniform
+                // barrier participation.
+                Store(
+                    _programActive,
+                    _emulateWave64 && UsesSubgroupOperations()
+                        ? _module.ConstantBool(true)
+                        : invocationInBounds);
 
                 if (_state.ComputeSystemRegisters is { } registers)
                 {
@@ -1692,8 +1742,8 @@ public static partial class Gen5SpirvTranslator
                 "SCbranchScc1" => Load(_boolType, _scc),
                 "SCbranchVccz" => LogicalNot(SubgroupAny(Load(_boolType, _vcc))),
                 "SCbranchVccnz" => SubgroupAny(Load(_boolType, _vcc)),
-                "SCbranchExecz" => LogicalNot(SubgroupAny(Load(_boolType, _exec))),
-                "SCbranchExecnz" => SubgroupAny(Load(_boolType, _exec)),
+                "SCbranchExecz" => LogicalNot(SubgroupAny(LoadEffectiveExec())),
+                "SCbranchExecnz" => SubgroupAny(LoadEffectiveExec()),
                 _ => 0,
             };
             return condition != 0;
@@ -1786,9 +1836,7 @@ public static partial class Gen5SpirvTranslator
             out string error)
         {
             error = string.Empty;
-            if (_lds == 0 ||
-                _ldsElementPointer == 0 ||
-                instruction.Control is not Gen5DataShareControl control)
+            if (instruction.Control is not Gen5DataShareControl control)
             {
                 error = "invalid LDS instruction";
                 return false;
@@ -1796,7 +1844,12 @@ public static partial class Gen5SpirvTranslator
 
             if (control.Gds)
             {
-                error = "GDS data share is not implemented";
+                return TryEmitGds(instruction, out error);
+            }
+
+            if (_lds == 0 || _ldsElementPointer == 0)
+            {
+                error = "invalid LDS instruction";
                 return false;
             }
 
@@ -1980,7 +2033,7 @@ public static partial class Gen5SpirvTranslator
 
         private void StoreLds(uint pointer, uint value)
         {
-            var active = Load(_boolType, _exec);
+            var active = LoadEffectiveExec();
             var oldValue = Load(_uintType, pointer);
             var selected = _module.AddInstruction(
                 SpirvOp.Select,
@@ -4011,7 +4064,7 @@ public static partial class Gen5SpirvTranslator
             inRange = _module.AddInstruction(
                 SpirvOp.LogicalAnd,
                 _boolType,
-                Load(_boolType, _exec),
+                LoadEffectiveExec(),
                 inRange);
             var writeLabel = _module.AllocateId();
             var mergeLabel = _module.AllocateId();
@@ -4284,7 +4337,7 @@ public static partial class Gen5SpirvTranslator
                 vector = _module.AddInstruction(
                     SpirvOp.Select,
                     output.Type,
-                    Load(_boolType, _exec),
+                    LoadEffectiveExec(),
                     vector,
                     Load(output.Type, output.Variable));
                 Store(output.Variable, vector);
@@ -4348,7 +4401,7 @@ public static partial class Gen5SpirvTranslator
             outputValue = _module.AddInstruction(
                 SpirvOp.Select,
                 _vec4Type,
-                Load(_boolType, _exec),
+                LoadEffectiveExec(),
                 outputValue,
                 Load(_vec4Type, outputVariable));
             Store(outputVariable, outputValue);
@@ -4592,7 +4645,7 @@ public static partial class Gen5SpirvTranslator
                 var value = _module.AddInstruction(
                     SpirvOp.Select,
                     _floatType,
-                    Load(_boolType, _exec),
+                    LoadEffectiveExec(),
                     Float(1),
                     Float(0));
                 StoreV(
@@ -4923,7 +4976,7 @@ public static partial class Gen5SpirvTranslator
         {
             if (guardWithExec)
             {
-                var active = Load(_boolType, _exec);
+                var active = LoadEffectiveExec();
                 var oldValue = LoadV(register);
                 value = _module.AddInstruction(
                     SpirvOp.Select,
@@ -4938,7 +4991,7 @@ public static partial class Gen5SpirvTranslator
 
         private void StorePackedHalf(uint register, uint value)
         {
-            var active = Load(_boolType, _exec);
+            var active = LoadEffectiveExec();
             if (Environment.GetEnvironmentVariable(
                     "SHARPEMU_FORCE_PACKED_STORE_EXEC_VALUES") == "1" &&
                 _state.Program.Address == 0x0000000500781200ul)
@@ -5237,8 +5290,19 @@ public static partial class Gen5SpirvTranslator
 
         private void EmitExecConditional(Action emit)
         {
-            var active = Load(_boolType, _exec);
+            var active = LoadEffectiveExec();
             EmitConditional(active, emit);
+        }
+
+        private uint LoadEffectiveExec()
+        {
+            var active = Load(_boolType, _exec);
+            return _stage == Gen5SpirvStage.Compute &&
+                _computeInvocationInBounds != 0
+                    ? LogicalAnd(
+                        active,
+                        Load(_boolType, _computeInvocationInBounds))
+                    : active;
         }
 
         private void EmitConditional(uint condition, Action emit)
@@ -5259,7 +5323,11 @@ public static partial class Gen5SpirvTranslator
 
         private bool UsesLds() =>
             _state.Program.Instructions.Any(instruction =>
-                instruction.Control is Gen5DataShareControl);
+                instruction.Control is Gen5DataShareControl { Gds: false });
+
+        private bool UsesGds() =>
+            _state.Program.Instructions.Any(instruction =>
+                instruction.Control is Gen5DataShareControl { Gds: true });
 
         private bool UsesSubgroupShuffle() =>
             _state.Program.Instructions.Any(instruction =>
@@ -5283,6 +5351,7 @@ public static partial class Gen5SpirvTranslator
             _stage == Gen5SpirvStage.Compute &&
             (UsesSubgroupShuffle() ||
              UsesSubgroupBroadcast() ||
+             UsesGds() ||
              UsesWaveControl() ||
              _state.Program.Instructions.Any(static instruction =>
                  instruction.Opcode is "VMbcntLoU32B32" or "VMbcntHiU32B32"));

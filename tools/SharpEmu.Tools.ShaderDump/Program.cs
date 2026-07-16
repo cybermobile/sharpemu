@@ -135,6 +135,14 @@ const ulong ProgramAddress = 0x100000;
         0xE0700010, 0x80020000, // buffer_store_dword v0, off, s[8:11], 0 offset:16
         0xBF810000,             // s_endpgm
     ]),
+    ("gds-append", true, [
+        0xD8FA0000, 0x05000000, // ds_append v5 gds
+        0xBF810000,             // s_endpgm
+    ]),
+    ("gds-consume", true, [
+        0xD8F60000, 0x06000000, // ds_consume v6 gds
+        0xBF810000,             // s_endpgm
+    ]),
 ];
 
 var outputDirectory = args.Length > 0
@@ -210,12 +218,26 @@ foreach (var (name, expectTranslate, words) in testPrograms)
         new uint[256],
         Array.Empty<Gen5ImageBinding>(),
         globalBindings);
+    var usesGds = program.Instructions.Any(instruction =>
+        instruction.Control is Gen5DataShareControl { Gds: true });
 
     if (Gen5SpirvTranslator.TryCompileVertexShader(state, evaluation, out var vertexShader, out var vertexError))
     {
-        var path = Path.Combine(outputDirectory, $"{name}.spv");
-        File.WriteAllBytes(path, vertexShader.Spirv);
-        Console.WriteLine($"[{name}] emit: success, {vertexShader.Spirv.Length} bytes -> {path}");
+        if (usesGds)
+        {
+            failures++;
+            Console.WriteLine($"[{name}] vertex emit: FAILED (graphics GDS was accepted)");
+        }
+        else
+        {
+            var path = Path.Combine(outputDirectory, $"{name}.spv");
+            File.WriteAllBytes(path, vertexShader.Spirv);
+            Console.WriteLine($"[{name}] emit: success, {vertexShader.Spirv.Length} bytes -> {path}");
+        }
+    }
+    else if (usesGds && vertexError.Contains("only in compute", StringComparison.Ordinal))
+    {
+        Console.WriteLine($"[{name}] vertex GDS rejected as expected ({vertexError})");
     }
     else
     {
@@ -233,6 +255,31 @@ foreach (var (name, expectTranslate, words) in testPrograms)
     {
         failures++;
         Console.WriteLine($"[{name}] compute emit: FAILED ({computeError})");
+    }
+
+    if (name.StartsWith("gds-", StringComparison.Ordinal))
+    {
+        if (Gen5SpirvTranslator.TryCompileComputeShader(
+                state,
+                evaluation,
+                64,
+                1,
+                1,
+                out var wave64Shader,
+                out var wave64Error,
+                waveLaneCount: 64))
+        {
+            var path = Path.Combine(outputDirectory, $"{name}-wave64-cs.spv");
+            File.WriteAllBytes(path, wave64Shader.Spirv);
+            Console.WriteLine(
+                $"[{name}] wave64 compute emit: success, " +
+                $"{wave64Shader.Spirv.Length} bytes -> {path}");
+        }
+        else
+        {
+            failures++;
+            Console.WriteLine($"[{name}] wave64 compute emit: FAILED ({wave64Error})");
+        }
     }
 
     if (name.StartsWith("mrt", StringComparison.Ordinal))

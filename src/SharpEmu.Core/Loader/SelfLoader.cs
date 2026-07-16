@@ -1,5 +1,6 @@
-// Copyright (C) 2026 SharpEmu Emulator Project
-// SPDX-License-Identifier: GPL-2.0-or-later
+// SPDX-FileCopyrightText: 2021 InoriRus
+// SPDX-FileCopyrightText: 2026 SharpEmu Emulator Project
+// SPDX-License-Identifier: GPL-2.0-or-later AND MIT
 
 using System.Buffers.Binary;
 using System.Diagnostics;
@@ -216,7 +217,13 @@ public sealed class SelfLoader : ISelfLoader
             }
         }
 
-        MapLoadSegments(imageData, loadContext, programHeaders, virtualMemory, imageBase);
+        MapLoadSegments(
+            imageData,
+            loadContext,
+            programHeaders,
+            virtualMemory,
+            imageBase,
+            isNextGen);
         // Register every module before relocations so DTPMOD/DTPOFF/TPOFF use
         // the module's real PT_TLS identity and Variant II static offset.
         var tlsInfo = RegisterModuleTlsTemplate(
@@ -430,7 +437,8 @@ public sealed class SelfLoader : ISelfLoader
         LoadContext loadContext,
         IReadOnlyList<ProgramHeader> programHeaders,
         IVirtualMemory virtualMemory,
-        ulong imageBase)
+        ulong imageBase,
+        bool isNextGen)
     {
         for (var index = 0; index < programHeaders.Count; index++)
         {
@@ -477,12 +485,21 @@ public sealed class SelfLoader : ISelfLoader
                 fileData = imageData.Slice((int)sourceOffset, (int)header.FileSize);
             }
 
+            // Gen5 binaries can carry PT_LOAD entries whose p_flags are zero.
+            // Kyty leaves those pages at the loader allocation's accessible
+            // RWX protection instead of converting them to NoAccess. Preserve
+            // the ABI-v0 meaning of zero flags while making the ABI-v2 quirk
+            // explicit for virtual-memory implementations without a prior
+            // process-wide allocation.
+            var protection = isNextGen && header.Flags == ProgramHeaderFlags.None
+                ? ProgramHeaderFlags.Read | ProgramHeaderFlags.Write | ProgramHeaderFlags.Execute
+                : header.Flags;
             virtualMemory.Map(
                 virtualAddress,
                 header.MemorySize,
                 sourceOffset,
                 fileData,
-                header.Flags);
+                protection);
         }
     }
 

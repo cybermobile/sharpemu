@@ -7,18 +7,32 @@ SPDX-License-Identifier: GPL-2.0-or-later
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         x:Class="SharpEmu.GUI.MainWindow"
         Title="SharpEmu"
-        Width="1280" Height="820"
+        Width="1380" Height="880"
         MinWidth="980" MinHeight="640"
-        WindowState="Maximized"
         WindowStartupLocation="CenterScreen"
         Background="{StaticResource BgBrush}"
         ExtendClientAreaToDecorationsHint="True"
         ExtendClientAreaChromeHints="PreferSystemChrome"
-        ExtendClientAreaTitleBarHeightHint="44"
-        Icon="avares://SharpEmu.GUI/Assets/SharpEmu.ico"
-        KeyDown="OnKeyDown">
+        ExtendClientAreaTitleBarHeightHint="64"
+        Icon="avares://SharpEmu.GUI/Assets/SharpEmu.ico">
 
-  <Grid RowDefinitions="Auto,*,Auto">
+  <Window.Resources>
+    <DataTemplate x:Key="InputBindingRowTemplate">
+      <Grid Width="300" ColumnDefinitions="*,150" Margin="0,4,8,4">
+        <TextBlock Text="{Binding Label}" FontSize="13" VerticalAlignment="Center"
+                   Margin="0,0,12,0" TextTrimming="CharacterEllipsis" />
+        <ComboBox Grid.Column="1" ItemsSource="{Binding Choices}"
+                  SelectedItem="{Binding SelectedChoice, Mode=TwoWay}"
+                  DisplayMemberBinding="{Binding Label}" CornerRadius="8"
+                  AutomationProperties.Name="{Binding Label}" />
+      </Grid>
+    </DataTemplate>
+    <ItemsPanelTemplate x:Key="InputBindingPanelTemplate">
+      <WrapPanel Orientation="Horizontal" />
+    </ItemsPanelTemplate>
+  </Window.Resources>
+
+  <Grid x:Name="MainShell" RowDefinitions="Auto,*,Auto">
 
     <!-- Selected-game backdrop: key art behind the main content, dimmed by
          a scrim so tiles and text stay readable. Fades on selection. -->
@@ -42,89 +56,105 @@ SPDX-License-Identifier: GPL-2.0-or-later
       </Border>
     </Panel>
 
-    <!-- Title bar; hidden in fullscreen (F11) along with the status bar, so
-         the game gets the whole screen. -->
-    <Grid x:Name="TitleBar" Grid.Row="0" Height="44" Background="{StaticResource ChromeBrush}">
-      <StackPanel Orientation="Horizontal" Spacing="10" Margin="16,0" VerticalAlignment="Center">
-        <Image Source="avares://SharpEmu.GUI/Assets/SharpEmu.ico" Width="20" Height="20"
-               RenderOptions.BitmapInterpolationMode="HighQuality" />
-        <TextBlock Text="SharpEmu" FontSize="14" FontWeight="SemiBold" VerticalAlignment="Center" />
-        <Border Classes="pill">
-          <TextBlock x:Name="VersionText" Text="v0.0.1" FontSize="11" Foreground="{StaticResource MutedBrush}" />
+    <!-- Desktop title/menu chrome. The left inset shares native title-bar
+         space with macOS traffic lights. -->
+    <Border x:Name="TitleBar" Grid.Row="0" Background="{StaticResource ChromeBrush}"
+            BorderBrush="{StaticResource CardBorderBrush}" BorderThickness="0,0,0,1"
+            Height="64">
+      <Grid ColumnDefinitions="Auto,*,Auto">
+        <StackPanel x:Name="TitleBarContent" Grid.Column="0" Orientation="Horizontal" Spacing="10"
+                    Margin="16,0,22,0" VerticalAlignment="Center">
+          <Image Source="avares://SharpEmu.GUI/Assets/SharpEmu.ico" Width="28" Height="28"
+                 RenderOptions.BitmapInterpolationMode="HighQuality"
+                 AutomationProperties.AccessibilityView="Raw" />
+          <TextBlock Text="SharpEmu" FontSize="17" FontWeight="Bold" VerticalAlignment="Center" />
+          <TextBlock x:Name="VersionText" Text="v0.0.1" FontSize="11"
+                     Foreground="{StaticResource FaintBrush}" VerticalAlignment="Center" />
+        </StackPanel>
+
+        <Menu Grid.Column="1" Classes="mainMenu" VerticalAlignment="Center"
+              AutomationProperties.LandmarkType="Navigation">
+          <MenuItem x:Name="FileMenuItem" Header="File">
+            <MenuItem x:Name="MenuOpenFile" Header="Open file…" />
+            <MenuItem x:Name="MenuAddFolder" Header="Add folder…" />
+            <MenuItem x:Name="MenuRescan" Header="Rescan library" />
+          </MenuItem>
+          <MenuItem x:Name="ViewMenuItem" Header="View">
+            <MenuItem x:Name="MenuLibrary" Header="Library" />
+            <MenuItem x:Name="MenuSettings" Header="Settings" />
+            <Separator />
+            <MenuItem x:Name="MenuConsole" Header="Console" />
+            <MenuItem x:Name="MenuFullscreen" Header="Toggle fullscreen" InputGesture="F11" />
+          </MenuItem>
+          <MenuItem x:Name="HelpMenuItem" Header="Help">
+            <MenuItem x:Name="MenuGithub" Header="Project repository" />
+            <MenuItem x:Name="MenuDiscord" Header="Community Discord" />
+          </MenuItem>
+        </Menu>
+
+        <Border Grid.Column="2" Classes="pill" Margin="16,0" VerticalAlignment="Center">
+          <TextBlock x:Name="BuildCardTitle" Text="EXPERIMENTAL BUILD" Classes="navLabel" />
         </Border>
-      </StackPanel>
-    </Grid>
+      </Grid>
+    </Border>
 
     <!-- Main content -->
-    <Grid Grid.Row="1" Margin="32,24,32,20" RowDefinitions="Auto,*,Auto,Auto">
+    <Grid Grid.Row="1" Margin="28,0,28,20" RowDefinitions="Auto,*,Auto,Auto"
+          MaxWidth="1440" HorizontalAlignment="Stretch">
 
-      <!-- Library / Options page switcher, with the library toolbar sharing
-           the same row on the right. Plain buttons (not TabItem) so there is
-           no underline; LB/RB hint chips flank the pair and the gamepad's
-           shoulder buttons actually switch pages from anywhere. -->
-      <Grid Grid.Row="0" ColumnDefinitions="Auto,*,Auto" Margin="0,0,0,20">
-        <StackPanel Grid.Column="0" Orientation="Horizontal" Spacing="14" VerticalAlignment="Center">
-          <Border Classes="padHint" VerticalAlignment="Center">
-            <TextBlock Text="LB" FontSize="11" FontWeight="Bold" Foreground="{StaticResource MutedBrush}" />
-          </Border>
-          <Button x:Name="LibraryTabButton" Classes="segment active" Content="Library" />
-          <Button x:Name="OptionsTabButton" Classes="segment" Content="Options" />
-          <Border Classes="padHint" VerticalAlignment="Center">
-            <TextBlock Text="RB" FontSize="11" FontWeight="Bold" Foreground="{StaticResource MutedBrush}" />
-          </Border>
+      <!-- Compact emulator command bar: library search leads while workspace
+           switching remains visible. File operations stay in the File menu. -->
+      <Grid Grid.Row="0" MinHeight="76" ColumnDefinitions="Auto,*" Margin="0,0,0,12">
+        <StackPanel Grid.Column="0" Spacing="2" VerticalAlignment="Center">
+          <TextBlock x:Name="PageTitleText" Text="Library" FontSize="26" FontWeight="Bold"
+                     AutomationProperties.HeadingLevel="1" />
+          <TextBlock x:Name="PageSubtitleText" Text="Browse, inspect, and launch installed games."
+                     FontSize="12" Foreground="{StaticResource MutedBrush}" />
         </StackPanel>
 
-        <StackPanel Grid.Column="2" x:Name="LibraryToolbar" Orientation="Horizontal" Spacing="8"
-                    VerticalAlignment="Center">
-          <TextBox x:Name="SearchBox" Watermark="Search library…" Width="240" VerticalAlignment="Center" />
-          <Button x:Name="AddFolderButton" Classes="ghost" Content="＋ Add folder" VerticalAlignment="Center" />
-          <Button x:Name="RescanButton" Classes="ghost" Content="⟳ Rescan" VerticalAlignment="Center" />
-          <Button x:Name="OpenFileButton" Classes="ghost" Content="Open file…" VerticalAlignment="Center" />
-        </StackPanel>
+        <WrapPanel Grid.Column="1" Orientation="Horizontal" HorizontalAlignment="Right"
+                   VerticalAlignment="Center" AutomationProperties.LandmarkType="Navigation">
+          <TextBox x:Name="SearchBox" Watermark="Search library…" Width="240" Margin="3,0,10,0"
+                   VerticalAlignment="Center" VerticalContentAlignment="Center"
+                   AutomationProperties.Name="Search library"
+                   AutomationProperties.HelpText="Filter games by title or title ID."
+                   AutomationProperties.AutomationId="LibrarySearchBox" />
+          <Button x:Name="LibraryTabButton" Classes="toolbarNav active" Content="Library" Margin="3,0"
+                  ToolTip.Tip="Controller shortcut: L1 / LB"
+                  AutomationProperties.AutomationId="LibraryPageButton" />
+          <Button x:Name="OptionsTabButton" Classes="toolbarNav" Content="Settings" Margin="3,0"
+                  ToolTip.Tip="Controller shortcut: R1 / RB"
+                  AutomationProperties.AutomationId="OptionsPageButton" />
+          <Button x:Name="ExitFullscreenButton" Classes="accent"
+                  Content="Exit fullscreen   Esc" IsVisible="False" Margin="10,0,3,0"
+                  AutomationProperties.Name="Exit fullscreen"
+                  AutomationProperties.HelpText="Leave fullscreen with this button, Escape, or F11."
+                  AutomationProperties.AutomationId="ExitFullscreenButton" />
+        </WrapPanel>
       </Grid>
 
       <Panel Grid.Row="1">
 
-        <!-- Library page. The tile row gets extra top margin so it sits
-             closer to eye level (PS5 home-screen style) instead of hugging
-             the Library/Options switcher above it. -->
-        <Panel x:Name="LibraryPage" Margin="0,64,0,0">
+        <!-- Library page: artwork reflows with the available desktop width;
+             the content begins close to navigation to preserve usable space. -->
+        <Panel x:Name="LibraryPage" Margin="0,12,0,0"
+               AutomationProperties.LandmarkType="Main">
           <ListBox x:Name="GameList" Classes="tileGrid" Background="Transparent"
-                   SelectionMode="Single" Padding="0">
+                   SelectionMode="Single" Padding="0"
+                   ScrollViewer.HorizontalScrollBarVisibility="Disabled"
+                   AutomationProperties.Name="Game library"
+                   AutomationProperties.HelpText="Choose a game to view details or launch it."
+                   AutomationProperties.AutomationId="GameLibraryList">
             <ListBox.ContextMenu>
               <ContextMenu x:Name="GameContextMenu" Placement="Pointer">
-                <MenuItem x:Name="CtxLaunch" Header="Launch" FontWeight="SemiBold">
-                  <MenuItem.Icon>
-                    <TextBlock Text="▶" FontSize="11" Foreground="{StaticResource AccentHoverBrush}"
-                               HorizontalAlignment="Center" VerticalAlignment="Center" />
-                  </MenuItem.Icon>
-                </MenuItem>
-                <MenuItem x:Name="CtxOpenFolder" Header="Open game folder">
-                  <MenuItem.Icon>
-                    <TextBlock Text="📂" FontSize="12" HorizontalAlignment="Center" VerticalAlignment="Center" />
-                  </MenuItem.Icon>
-                </MenuItem>
+                <MenuItem x:Name="CtxLaunch" Header="Launch" FontWeight="SemiBold" />
+                <MenuItem x:Name="CtxOpenFolder" Header="Open game folder" />
                 <Separator />
-                <MenuItem x:Name="CtxCopyPath" Header="Copy path">
-                  <MenuItem.Icon>
-                    <TextBlock Text="⧉" FontSize="13" Foreground="{StaticResource MutedBrush}"
-                               HorizontalAlignment="Center" VerticalAlignment="Center" />
-                  </MenuItem.Icon>
-                </MenuItem>
-                <MenuItem x:Name="CtxCopyTitleId" Header="Copy title ID">
-                  <MenuItem.Icon>
-                    <TextBlock Text="⧉" FontSize="13" Foreground="{StaticResource MutedBrush}"
-                               HorizontalAlignment="Center" VerticalAlignment="Center" />
-                  </MenuItem.Icon>
-                </MenuItem>
+                <MenuItem x:Name="CtxCopyPath" Header="Copy path" />
+                <MenuItem x:Name="CtxCopyTitleId" Header="Copy title ID" />
                 <Separator />
                 <MenuItem x:Name="CtxRemove" Header="Remove from library"
-                          Foreground="{StaticResource DangerHoverBrush}">
-                  <MenuItem.Icon>
-                    <TextBlock Text="✕" FontSize="12" Foreground="{StaticResource DangerHoverBrush}"
-                               HorizontalAlignment="Center" VerticalAlignment="Center" />
-                  </MenuItem.Icon>
-                </MenuItem>
+                          Foreground="{StaticResource DangerHoverBrush}" />
               </ContextMenu>
             </ListBox.ContextMenu>
             <ListBox.ItemsPanel>
@@ -134,22 +164,23 @@ SPDX-License-Identifier: GPL-2.0-or-later
             </ListBox.ItemsPanel>
             <ListBox.ItemTemplate>
               <DataTemplate>
-                <StackPanel Width="128" Height="172" Spacing="7">
-                  <Border Classes="coverShadow" Width="128" Height="128">
+                <StackPanel Width="168" Height="222" Spacing="10">
+                  <Border Classes="coverShadow" Width="168" Height="168">
                     <Border Classes="coverClip">
                       <Panel>
                         <Border Background="{Binding PlaceholderBrush}" IsVisible="{Binding !HasCover}">
-                          <TextBlock Text="{Binding Initials}" FontSize="36" FontWeight="Bold"
+                          <TextBlock Text="{Binding Initials}" FontSize="42" FontWeight="Bold"
                                      Foreground="#E8ECF4" Opacity="0.85"
                                      HorizontalAlignment="Center" VerticalAlignment="Center" />
                         </Border>
-                        <Image Source="{Binding Cover}" Stretch="UniformToFill" IsVisible="{Binding HasCover}" />
+                        <Image Source="{Binding Cover}" Stretch="UniformToFill" IsVisible="{Binding HasCover}"
+                               AutomationProperties.AccessibilityView="Raw" />
                       </Panel>
                     </Border>
                   </Border>
-                  <TextBlock Text="{Binding Name}" FontSize="13" FontWeight="SemiBold"
+                  <TextBlock Text="{Binding Name}" FontSize="14" FontWeight="SemiBold"
                              TextWrapping="Wrap" MaxLines="2" TextTrimming="CharacterEllipsis"
-                             TextAlignment="Center" HorizontalAlignment="Center" />
+                             TextAlignment="Left" HorizontalAlignment="Stretch" />
                 </StackPanel>
               </DataTemplate>
             </ListBox.ItemTemplate>
@@ -158,38 +189,62 @@ SPDX-License-Identifier: GPL-2.0-or-later
           <!-- Empty state -->
           <StackPanel x:Name="EmptyState" Spacing="10" HorizontalAlignment="Center" VerticalAlignment="Center"
                       IsVisible="False">
-            <TextBlock Text="🎮" FontSize="44" HorizontalAlignment="Center" Opacity="0.7" />
-            <TextBlock x:Name="EmptyStateTitle" Text="Your library is empty" FontSize="18" FontWeight="SemiBold"
-                       HorizontalAlignment="Center" />
+            <Border Width="88" Height="88" CornerRadius="22" Background="{StaticResource ElevatedBrush}"
+                    BorderBrush="{StaticResource CardBorderBrush}" BorderThickness="1"
+                    HorizontalAlignment="Center" Margin="0,0,0,6">
+              <Image Source="avares://SharpEmu.GUI/Assets/SharpEmu.ico" Width="52" Height="52"
+                     HorizontalAlignment="Center" VerticalAlignment="Center"
+                     RenderOptions.BitmapInterpolationMode="HighQuality"
+                     AutomationProperties.AccessibilityView="Raw" />
+            </Border>
+            <TextBlock x:Name="EmptyStateTitle" Text="Your library is empty" FontSize="22" FontWeight="SemiBold"
+                       HorizontalAlignment="Center" AutomationProperties.HeadingLevel="2" />
             <TextBlock x:Name="EmptyStateHint" Text="Add a folder containing your games to get started."
-                       FontSize="13" Foreground="{StaticResource MutedBrush}" HorizontalAlignment="Center" />
+                       FontSize="13" Foreground="{StaticResource MutedBrush}" HorizontalAlignment="Center"
+                       TextAlignment="Center" TextWrapping="Wrap" MaxWidth="440" />
             <Button x:Name="EmptyAddFolderButton" Classes="accent" Content="＋ Add game folder"
-                    HorizontalAlignment="Center" Margin="0,8,0,0" />
+                    HorizontalAlignment="Center" Margin="0,8,0,0"
+                    AutomationProperties.AutomationId="EmptyLibraryAddFolderButton" />
           </StackPanel>
 
           <!-- Loading state: covers the grid while a scan (initial load,
                rescan, or a just-added folder) is in flight, so the screen
                never looks blank mid-scan. -->
           <StackPanel x:Name="LoadingState" Spacing="14" HorizontalAlignment="Center" VerticalAlignment="Center"
-                      IsVisible="False">
+                      IsVisible="False" AutomationProperties.LiveSetting="Polite">
             <ProgressBar IsIndeterminate="True" Width="180" Height="3" />
             <TextBlock x:Name="LoadingStateText" Text="Loading library…" FontSize="13"
                        Foreground="{StaticResource MutedBrush}" HorizontalAlignment="Center" />
           </StackPanel>
         </Panel>
 
-        <!-- Options page: sub-tabs so future categories (Graphics, …) slot
-             in next to General. Card-grouped sections match the visual
-             language used by the console panel and launch bar below. -->
-        <Grid x:Name="OptionsPage" IsVisible="False">
-          <TabControl>
-            <TabItem x:Name="GeneralTabItem" Header="General" FontSize="15">
-              <ScrollViewer>
-                <StackPanel Margin="0,14,0,16" Spacing="16" MaxWidth="1280" HorizontalAlignment="Left">
+        <!-- Settings workspace: PCSX2-inspired category rail with an explicit
+             global scope. Debug/environment controls remain a separate category. -->
+        <Grid x:Name="OptionsPage" IsVisible="False" RowDefinitions="Auto,*"
+              MaxWidth="1120" HorizontalAlignment="Stretch"
+              AutomationProperties.LandmarkType="Main">
+          <Grid Grid.Row="0" ColumnDefinitions="*,Auto" Margin="0,4,0,14">
+            <StackPanel Spacing="3">
+              <TextBlock x:Name="SettingsScopeTitle" Text="Global settings" FontSize="18" FontWeight="SemiBold" />
+              <TextBlock x:Name="SettingsScopeDescription"
+                         Text="These defaults apply to every game unless a future per-game profile overrides them."
+                         FontSize="12" Foreground="{StaticResource MutedBrush}" TextWrapping="Wrap" />
+            </StackPanel>
+            <Border Grid.Column="1" Classes="pill" VerticalAlignment="Center" Margin="16,0,0,0">
+              <TextBlock x:Name="SettingsScopeBadge" Text="ALL GAMES" Classes="navLabel" />
+            </Border>
+          </Grid>
+          <TabControl Grid.Row="1" TabStripPlacement="Left" HorizontalAlignment="Stretch">
+            <TabItem x:Name="GeneralTabItem" Header="General" FontSize="15"
+                     HorizontalContentAlignment="Stretch">
+              <ScrollViewer HorizontalScrollBarVisibility="Disabled"
+                            VerticalScrollBarVisibility="Visible" HorizontalAlignment="Stretch">
+                <StackPanel Margin="0,14,0,16" Spacing="16" MaxWidth="900" HorizontalAlignment="Stretch">
 
                   <Border Classes="card">
                     <StackPanel Spacing="14">
-                      <TextBlock x:Name="EmulationSectionTitle" Classes="sectionTitle" Text="EMULATION" />
+                      <TextBlock x:Name="EmulationSectionTitle" Classes="sectionTitle" Text="EMULATION"
+                                 AutomationProperties.HeadingLevel="2" />
 
                       <Grid ColumnDefinitions="*,Auto">
                         <StackPanel VerticalAlignment="Center" Spacing="2" Margin="0,0,16,0">
@@ -217,7 +272,8 @@ SPDX-License-Identifier: GPL-2.0-or-later
 
                   <Border Classes="card">
                     <StackPanel Spacing="14">
-                      <TextBlock x:Name="LoggingSectionTitle" Classes="sectionTitle" Text="LOGGING" />
+                      <TextBlock x:Name="LoggingSectionTitle" Classes="sectionTitle" Text="LOGGING"
+                                 AutomationProperties.HeadingLevel="2" />
 
                       <Grid ColumnDefinitions="*,Auto">
                         <StackPanel VerticalAlignment="Center" Spacing="2" Margin="0,0,16,0">
@@ -282,7 +338,8 @@ SPDX-License-Identifier: GPL-2.0-or-later
 
                   <Border Classes="card">
                     <StackPanel Spacing="14">
-                      <TextBlock x:Name="LauncherSectionTitle" Classes="sectionTitle" Text="LAUNCHER" />
+                      <TextBlock x:Name="LauncherSectionTitle" Classes="sectionTitle" Text="LAUNCHER"
+                                 AutomationProperties.HeadingLevel="2" />
 
                       <Grid ColumnDefinitions="*,Auto">
                         <StackPanel VerticalAlignment="Center" Spacing="2" Margin="0,0,16,0">
@@ -331,7 +388,8 @@ SPDX-License-Identifier: GPL-2.0-or-later
                     <StackPanel Spacing="14">
                       <TextBlock x:Name="AboutSectionTitle"
                                 Classes="sectionTitle"
-                                Text="ABOUT" />
+                                Text="ABOUT"
+                                AutomationProperties.HeadingLevel="2" />
 
                       <Grid ColumnDefinitions="*,Auto">
                         <StackPanel Grid.Column="0" Spacing="2" VerticalAlignment="Center">
@@ -352,7 +410,8 @@ SPDX-License-Identifier: GPL-2.0-or-later
                           <Image Source="avares://SharpEmu.GUI/Assets/github.png"
                                     Width="20"
                                     Height="20"
-                                    VerticalAlignment="Center" />
+                                    VerticalAlignment="Center"
+                                    AutomationProperties.AccessibilityView="Raw" />
                           <StackPanel VerticalAlignment="Center"
                                           Spacing="2">
                             <TextBlock x:Name="GithubLabel"
@@ -370,7 +429,9 @@ SPDX-License-Identifier: GPL-2.0-or-later
                                 x:Name="GithubButton"
                                 Classes="ghost"
                                 Content="Open"
-                                VerticalAlignment="Center" />
+                                VerticalAlignment="Center"
+                                MinWidth="144"
+                                AutomationProperties.AutomationId="OpenGithubButton" />
                       </Grid>
 
                       <!--Discord-->
@@ -382,7 +443,8 @@ SPDX-License-Identifier: GPL-2.0-or-later
                           <Image Source="avares://SharpEmu.GUI/Assets/discord.png"
                                   Width="20"
                                   Height="20"
-                                  VerticalAlignment="Center" />
+                                  VerticalAlignment="Center"
+                                  AutomationProperties.AccessibilityView="Raw" />
                           <StackPanel VerticalAlignment="Center"
                                       Spacing="2">
                             <TextBlock x:Name="DiscordServerLabel"
@@ -400,20 +462,162 @@ SPDX-License-Identifier: GPL-2.0-or-later
                                 x:Name="DiscordButton"
                                 Classes="ghost"
                                 Content="Join"
-                                VerticalAlignment="Center" />
+                                VerticalAlignment="Center"
+                                MinWidth="144"
+                                AutomationProperties.AutomationId="OpenDiscordButton" />
                       </Grid>
                     </StackPanel>
                   </Border>
                 </StackPanel>
               </ScrollViewer>
             </TabItem>
-            <TabItem x:Name="EnvTabItem" Header="Environment" FontSize="15">
-              <ScrollViewer>
-                <StackPanel Margin="0,14,0,16" Spacing="16" MaxWidth="1280" HorizontalAlignment="Left">
+            <TabItem x:Name="ControlsTabItem" Header="Controls" FontSize="15"
+                     HorizontalContentAlignment="Stretch">
+              <ScrollViewer HorizontalScrollBarVisibility="Disabled"
+                            VerticalScrollBarVisibility="Visible" HorizontalAlignment="Stretch">
+                <StackPanel Margin="0,14,0,16" Spacing="16" MaxWidth="900" HorizontalAlignment="Stretch">
+                  <Grid ColumnDefinitions="*,Auto">
+                    <StackPanel Spacing="3" Margin="0,0,16,0">
+                      <TextBlock x:Name="ControlsPageTitle" Text="Input mappings" FontSize="18"
+                                 FontWeight="SemiBold" AutomationProperties.HeadingLevel="2" />
+                      <TextBlock x:Name="ControlsPageDescription"
+                                 Text="Global mappings apply when the next game starts. Launcher navigation keeps its standard layout."
+                                 FontSize="12" Foreground="{StaticResource MutedBrush}" TextWrapping="Wrap" />
+                    </StackPanel>
+                    <Button x:Name="ResetInputMappingsButton" Grid.Column="1" Classes="ghost compact"
+                            Content="Reset defaults" VerticalAlignment="Center"
+                            AutomationProperties.AutomationId="ResetInputMappingsButton" />
+                  </Grid>
+
+                  <Border Classes="card">
+                    <StackPanel Spacing="10">
+                      <TextBlock x:Name="InputDeviceModeLabel" Classes="sectionTitle"
+                                 Text="CHOOSE INPUT DEVICE" />
+                      <StackPanel Orientation="Horizontal" Spacing="8">
+                        <ToggleButton x:Name="ControllerInputModeButton" Classes="toolbarNav active"
+                                      Content="Controller" IsChecked="True"
+                                      AutomationProperties.AutomationId="ControllerInputModeButton" />
+                        <ToggleButton x:Name="KeyboardInputModeButton" Classes="toolbarNav"
+                                      Content="Keyboard"
+                                      AutomationProperties.AutomationId="KeyboardInputModeButton" />
+                      </StackPanel>
+                    </StackPanel>
+                  </Border>
+
+                  <StackPanel x:Name="ControllerInputPanel" Spacing="16">
+                    <Border Classes="card">
+                      <StackPanel Spacing="10">
+                        <TextBlock x:Name="ControllerDiagramTitle" Classes="sectionTitle"
+                                   Text="DUALSENSE LAYOUT" />
+                        <TextBlock x:Name="ControllerDiagramDescription"
+                                   Text="Use the diagram to locate each control, then choose its mapping below."
+                                   FontSize="11" Foreground="{StaticResource MutedBrush}" TextWrapping="Wrap" />
+                        <Border Background="Transparent" Padding="4" Width="400"
+                                HorizontalAlignment="Center" ClipToBounds="True">
+                          <Image x:Name="ControllerImage"
+                                 Source="avares://SharpEmu.GUI/Assets/DualSense-Controller-transparent.png"
+                                 Stretch="Uniform" MaxHeight="300" HorizontalAlignment="Center"
+                                 RenderOptions.BitmapInterpolationMode="HighQuality"
+                                 AutomationProperties.Name="White DualSense controller showing its buttons, touchpad, and analog sticks." />
+                        </Border>
+                      </StackPanel>
+                    </Border>
+
+                    <Border Classes="card">
+                      <StackPanel Spacing="10">
+                        <TextBlock x:Name="ControllerBindingsTitle" Classes="sectionTitle"
+                                   Text="CONTROLLER BUTTONS" />
+                        <TextBlock x:Name="ControllerBindingsDescription"
+                                   Text="Choose which physical control drives each PlayStation button."
+                                   FontSize="11" Foreground="{StaticResource MutedBrush}" TextWrapping="Wrap" />
+                        <ItemsControl x:Name="ControllerBindingList"
+                                      ItemTemplate="{StaticResource InputBindingRowTemplate}"
+                                      ItemsPanel="{StaticResource InputBindingPanelTemplate}" />
+                      </StackPanel>
+                    </Border>
+
+                    <Border Classes="card">
+                      <StackPanel Spacing="14">
+                        <TextBlock x:Name="StickSettingsTitle" Classes="sectionTitle" Text="STICKS" />
+                        <Grid ColumnDefinitions="*,Auto">
+                          <StackPanel Spacing="2" Margin="0,0,16,0">
+                            <TextBlock x:Name="StickDeadzoneLabel" Text="Stick deadzone" FontSize="13" />
+                            <TextBlock x:Name="StickDeadzoneDescription"
+                                       Text="Ignore small movement around the center position (0–64)."
+                                       FontSize="11" Foreground="{StaticResource MutedBrush}" TextWrapping="Wrap" />
+                          </StackPanel>
+                          <NumericUpDown x:Name="StickDeadzoneBox" Grid.Column="1" Width="160"
+                                         Minimum="0" Maximum="64" Increment="1" FormatString="0" />
+                        </Grid>
+                        <Grid ColumnDefinitions="*,Auto">
+                          <TextBlock x:Name="SwapSticksLabel" Text="Swap left and right sticks" FontSize="13"
+                                     VerticalAlignment="Center" />
+                          <ToggleSwitch x:Name="SwapSticksToggle" Grid.Column="1" OnContent="On" OffContent="Off" />
+                        </Grid>
+                        <Grid ColumnDefinitions="*,Auto">
+                          <TextBlock x:Name="InvertLeftXLabel" Text="Invert left stick X" FontSize="13"
+                                     VerticalAlignment="Center" />
+                          <ToggleSwitch x:Name="InvertLeftXToggle" Grid.Column="1" OnContent="On" OffContent="Off" />
+                        </Grid>
+                        <Grid ColumnDefinitions="*,Auto">
+                          <TextBlock x:Name="InvertLeftYLabel" Text="Invert left stick Y" FontSize="13"
+                                     VerticalAlignment="Center" />
+                          <ToggleSwitch x:Name="InvertLeftYToggle" Grid.Column="1" OnContent="On" OffContent="Off" />
+                        </Grid>
+                        <Grid ColumnDefinitions="*,Auto">
+                          <TextBlock x:Name="InvertRightXLabel" Text="Invert right stick X" FontSize="13"
+                                     VerticalAlignment="Center" />
+                          <ToggleSwitch x:Name="InvertRightXToggle" Grid.Column="1" OnContent="On" OffContent="Off" />
+                        </Grid>
+                        <Grid ColumnDefinitions="*,Auto">
+                          <TextBlock x:Name="InvertRightYLabel" Text="Invert right stick Y" FontSize="13"
+                                     VerticalAlignment="Center" />
+                          <ToggleSwitch x:Name="InvertRightYToggle" Grid.Column="1" OnContent="On" OffContent="Off" />
+                        </Grid>
+                      </StackPanel>
+                    </Border>
+                  </StackPanel>
+
+                  <StackPanel x:Name="KeyboardInputPanel" Spacing="16" IsVisible="False">
+                    <Border Classes="card">
+                      <StackPanel Spacing="10">
+                        <TextBlock x:Name="KeyboardBindingsTitle" Classes="sectionTitle"
+                                   Text="KEYBOARD BUTTONS" />
+                        <TextBlock x:Name="KeyboardBindingsDescription"
+                                   Text="Assign a primary keyboard key to each PlayStation button. Choose Unbound to disable it."
+                                   FontSize="11" Foreground="{StaticResource MutedBrush}" TextWrapping="Wrap" />
+                        <ItemsControl x:Name="KeyboardBindingList"
+                                      ItemTemplate="{StaticResource InputBindingRowTemplate}"
+                                      ItemsPanel="{StaticResource InputBindingPanelTemplate}" />
+                      </StackPanel>
+                    </Border>
+
+                    <Border Classes="card">
+                      <StackPanel Spacing="10">
+                        <TextBlock x:Name="KeyboardSticksTitle" Classes="sectionTitle"
+                                   Text="KEYBOARD STICKS" />
+                        <TextBlock x:Name="KeyboardSticksDescription"
+                                   Text="Assign the negative and positive directions for both analog sticks."
+                                   FontSize="11" Foreground="{StaticResource MutedBrush}" TextWrapping="Wrap" />
+                        <ItemsControl x:Name="KeyboardAxisBindingList"
+                                      ItemTemplate="{StaticResource InputBindingRowTemplate}"
+                                      ItemsPanel="{StaticResource InputBindingPanelTemplate}" />
+                      </StackPanel>
+                    </Border>
+                  </StackPanel>
+                </StackPanel>
+              </ScrollViewer>
+            </TabItem>
+            <TabItem x:Name="EnvTabItem" Header="Environment" FontSize="15"
+                     HorizontalContentAlignment="Stretch">
+              <ScrollViewer HorizontalScrollBarVisibility="Disabled"
+                            VerticalScrollBarVisibility="Visible" HorizontalAlignment="Stretch">
+                <StackPanel Margin="0,14,0,16" Spacing="16" MaxWidth="900" HorizontalAlignment="Stretch">
 
                   <Border Classes="card">
                     <StackPanel Spacing="14">
-                      <TextBlock x:Name="EnvSectionTitle" Classes="sectionTitle" Text="ENVIRONMENT VARIABLES" />
+                      <TextBlock x:Name="EnvSectionTitle" Classes="sectionTitle" Text="ENVIRONMENT VARIABLES"
+                                 AutomationProperties.HeadingLevel="2" />
                       <TextBlock x:Name="EnvDesc"
                                  Text="Switches passed to the emulator as environment variables at launch."
                                  FontSize="11" Foreground="{StaticResource MutedBrush}" TextWrapping="Wrap" />
@@ -516,13 +720,15 @@ SPDX-License-Identifier: GPL-2.0-or-later
       </Panel>
 
       <!-- Console (collapsible) -->
-      <Border Grid.Row="2" x:Name="ConsolePanel" Classes="card" Padding="0" Height="240"
+      <Border Grid.Row="2" x:Name="ConsolePanel" Classes="card" Padding="0" Height="260"
               Margin="0,12,0,0" IsVisible="False">
         <Grid RowDefinitions="Auto,*">
           <Grid Grid.Row="0" ColumnDefinitions="*,Auto,Auto,Auto,Auto,Auto" Margin="16,12,16,8">
             <TextBlock x:Name="ConsoleSectionTitle" Classes="sectionTitle" Text="CONSOLE" VerticalAlignment="Center" />
             <TextBox Grid.Column="1" FontSize="12" Margin="0,0,12,0" x:Name="ConsoleSearchBox"
-                    Watermark="Search..." Width="320" />
+                    Watermark="Search..." Width="280"
+                    AutomationProperties.Name="Search console output"
+                    AutomationProperties.AutomationId="ConsoleSearchBox" />
             <CheckBox Grid.Column="2" x:Name="AutoScrollCheck" Content="Auto-scroll" IsChecked="True"
                     FontSize="12" Margin="0,0,12,0" />
             <Button Grid.Column="3" x:Name="DetachConsoleButton" Classes="ghost" Content="Split" FontSize="12"
@@ -533,7 +739,9 @@ SPDX-License-Identifier: GPL-2.0-or-later
                     Padding="10,4" />
           </Grid>
           <ListBox Grid.Row="1" x:Name="ConsoleList" Classes="console" BorderThickness="0,1,0,0"
-                   BorderBrush="{StaticResource CardBorderBrush}" CornerRadius="0,0,12,12">
+                   BorderBrush="{StaticResource CardBorderBrush}" CornerRadius="0,0,12,12"
+                   AutomationProperties.Name="Emulator console output"
+                   AutomationProperties.AutomationId="ConsoleOutputList">
             <ListBox.ItemTemplate>
               <DataTemplate>
                 <TextBlock Text="{Binding Text}" Foreground="{Binding Brush}" TextWrapping="NoWrap" />
@@ -543,31 +751,35 @@ SPDX-License-Identifier: GPL-2.0-or-later
         </Grid>
       </Border>
 
-      <!-- Launch bar; capped so it does not sprawl on a maximized window. -->
-      <Border Grid.Row="3" Classes="card" Margin="0,12,0,0" Padding="14" MaxWidth="1280">
+      <!-- Selected-game inspector and primary actions. -->
+      <Border x:Name="SelectedGamePanel" Grid.Row="3" Classes="actionPanel" Margin="0,16,0,0" Padding="18">
         <StackPanel Spacing="14">
           <Grid ColumnDefinitions="Auto,*,Auto">
 
             <!-- Selected game cover thumbnail -->
-            <Border Grid.Column="0" Classes="coverClip" Width="56" Height="56" CornerRadius="8"
+            <Border Grid.Column="0" Classes="coverClip" Width="72" Height="72" CornerRadius="10"
                     VerticalAlignment="Center">
               <Panel x:Name="SelectedCoverPanel">
+                <Image Source="avares://SharpEmu.GUI/Assets/SharpEmu.ico" Width="34" Height="34"
+                       Opacity="0.28" HorizontalAlignment="Center" VerticalAlignment="Center"
+                       AutomationProperties.AccessibilityView="Raw" />
                 <Border Background="{Binding PlaceholderBrush, FallbackValue={x:Null}}"
                         IsVisible="{Binding !HasCover, FallbackValue=False}">
-                  <TextBlock Text="{Binding Initials}" FontSize="20" FontWeight="Bold"
+                  <TextBlock Text="{Binding Initials}" FontSize="24" FontWeight="Bold"
                              Foreground="#E8ECF4" Opacity="0.85"
                              HorizontalAlignment="Center" VerticalAlignment="Center" />
                 </Border>
                 <Image Source="{Binding Cover}" Stretch="UniformToFill"
-                       IsVisible="{Binding HasCover, FallbackValue=False}" />
+                       IsVisible="{Binding HasCover, FallbackValue=False}"
+                       AutomationProperties.AccessibilityView="Raw" />
               </Panel>
             </Border>
 
-            <StackPanel Grid.Column="1" Spacing="4" VerticalAlignment="Center" Margin="14,0,14,0">
+            <StackPanel Grid.Column="1" Spacing="5" VerticalAlignment="Center" Margin="18,0,18,0">
               <Grid ColumnDefinitions="Auto,Auto,*">
-                <TextBlock Grid.Column="0" x:Name="SelectedGameTitle" Text="No game selected" FontSize="16"
+                <TextBlock Grid.Column="0" x:Name="SelectedGameTitle" Text="No game selected" FontSize="20"
                            FontWeight="Bold" TextTrimming="CharacterEllipsis" VerticalAlignment="Center"
-                           MaxWidth="340" Margin="0,0,10,0" />
+                           MaxWidth="420" Margin="0,0,10,0" AutomationProperties.HeadingLevel="2" />
 
                 <!-- Title id / version / size badges, right next to the
                      title. The title's own MaxWidth (not a "*" column) is
@@ -590,19 +802,22 @@ SPDX-License-Identifier: GPL-2.0-or-later
               </Grid>
 
               <TextBlock x:Name="SelectedGamePath" Text="Pick a game from the library, or open an eboot.bin directly."
-                         FontSize="11" Foreground="{StaticResource MutedBrush}" TextTrimming="CharacterEllipsis" />
+                         FontSize="12" Foreground="{StaticResource MutedBrush}" TextTrimming="CharacterEllipsis" />
               <StackPanel Orientation="Horizontal" Spacing="7">
                 <Ellipse x:Name="StatusDot" Width="8" Height="8" Fill="{StaticResource FaintBrush}"
                          VerticalAlignment="Center" />
                 <TextBlock x:Name="StatusText" Text="Idle" FontSize="11" Foreground="{StaticResource MutedBrush}"
-                           VerticalAlignment="Center" />
+                           VerticalAlignment="Center" AutomationProperties.LiveSetting="Polite" />
               </StackPanel>
             </StackPanel>
 
             <StackPanel Grid.Column="2" Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
-              <ToggleButton x:Name="ConsoleToggle" Classes="ghost" Content="≡ Console" />
-              <Button x:Name="LaunchButton" Classes="accent" Content="▶  Launch" IsEnabled="False" />
-              <Button x:Name="StopButton" Classes="danger" Content="■  Stop" IsEnabled="False" />
+              <ToggleButton x:Name="ConsoleToggle" Classes="ghost" Content="≡ Console"
+                            AutomationProperties.AutomationId="ToggleConsoleButton" />
+              <Button x:Name="LaunchButton" Classes="accent" Content="▶  Launch" IsEnabled="False"
+                      AutomationProperties.AutomationId="LaunchSelectedGameButton" />
+              <Button x:Name="StopButton" Classes="danger" Content="■  Stop" IsEnabled="False"
+                      AutomationProperties.AutomationId="StopEmulationButton" />
             </StackPanel>
           </Grid>
         </StackPanel>
@@ -610,13 +825,15 @@ SPDX-License-Identifier: GPL-2.0-or-later
     </Grid>
 
     <!-- Status bar -->
-    <Grid x:Name="StatusBar" Grid.Row="2" Height="32" Background="{StaticResource ChromeBrush}"
+    <Grid x:Name="StatusBar" Grid.Row="2" Height="36" Background="{StaticResource ChromeBrush}"
           ColumnDefinitions="*,Auto">
       <TextBlock x:Name="EmulatorPathText" Grid.Column="0" Text="Emulator: locating…" FontSize="11"
                  Foreground="{StaticResource FaintBrush}" VerticalAlignment="Center" Margin="16,0"
                  TextTrimming="CharacterEllipsis" />
       <TextBlock x:Name="StatusBarRight" Grid.Column="1" Text="" FontSize="11"
-                 Foreground="{StaticResource FaintBrush}" VerticalAlignment="Center" Margin="16,0" />
+                 Foreground="{StaticResource FaintBrush}" VerticalAlignment="Center" Margin="16,0"
+                 AutomationProperties.LiveSetting="Polite" />
     </Grid>
+
   </Grid>
 </Window>

@@ -1,5 +1,6 @@
-// Copyright (C) 2026 SharpEmu Emulator Project
-// SPDX-License-Identifier: GPL-2.0-or-later
+// SPDX-FileCopyrightText: 2021 InoriRus
+// SPDX-FileCopyrightText: 2026 SharpEmu Emulator Project
+// SPDX-License-Identifier: GPL-2.0-or-later AND MIT
 
 using SharpEmu.HLE;
 using System.Buffers;
@@ -70,6 +71,25 @@ public static class KernelEventQueueCompatExports
             Count++;
         }
 
+        public void AddFirst(in KernelQueuedEvent item)
+        {
+            if (Count == _items.Length)
+            {
+                var grown = new KernelQueuedEvent[_items.Length * 2];
+                for (var i = 0; i < Count; i++)
+                {
+                    grown[i] = this[i];
+                }
+
+                _items = grown;
+                _head = 0;
+            }
+
+            _head = (_head - 1 + _items.Length) % _items.Length;
+            _items[_head] = item;
+            Count++;
+        }
+
         public KernelQueuedEvent RemoveFirst()
         {
             var value = _items[_head];
@@ -103,7 +123,7 @@ public static class KernelEventQueueCompatExports
 
         public int Resume() => ResumeWaitEqueue(Ctx, Handle, EventsAddress, EventCapacity, OutCountAddress);
 
-        public bool TryWake() => HasPendingEvents(Handle);
+        public bool TryWake() => !IsValidEqueue(Handle) || HasPendingEvents(Handle);
     }
 
     [SysAbiExport(
@@ -114,7 +134,8 @@ public static class KernelEventQueueCompatExports
     public static int KernelCreateEqueue(CpuContext ctx)
     {
         var outAddress = ctx[CpuRegister.Rdi];
-        if (outAddress == 0)
+        var nameAddress = ctx[CpuRegister.Rsi];
+        if (outAddress == 0 || nameAddress == 0)
         {
             return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_INVALID_ARGUMENT;
         }
@@ -129,7 +150,14 @@ public static class KernelEventQueueCompatExports
 
         if (!ctx.TryWriteUInt64(outAddress, handle))
         {
-            return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT;
+            lock (_eventQueueGate)
+            {
+                _eventQueues.Remove(handle);
+                _pendingEvents.Remove(handle);
+                _registeredEvents.Remove(handle);
+            }
+
+            return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_FAULT;
         }
 
         TraceEventQueue(ctx, "create", handle);
@@ -144,13 +172,24 @@ public static class KernelEventQueueCompatExports
     public static int KernelDeleteEqueue(CpuContext ctx)
     {
         var handle = ctx[CpuRegister.Rdi];
+        var removed = false;
         lock (_eventQueueGate)
         {
-            _eventQueues.Remove(handle);
-            _pendingEvents.Remove(handle);
-            _registeredEvents.Remove(handle);
+            if (_eventQueues.Remove(handle))
+            {
+                removed = true;
+                _pendingEvents.Remove(handle);
+                _registeredEvents.Remove(handle);
+                Monitor.PulseAll(_eventQueueGate);
+            }
         }
 
+        if (!removed)
+        {
+            return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_BAD_FILE_DESCRIPTOR;
+        }
+
+        WakeEventQueue(handle);
         _wakeKeys.TryRemove(handle, out _);
 
         TraceEventQueue(ctx, "delete", handle);
@@ -165,6 +204,11 @@ public static class KernelEventQueueCompatExports
     public static int KernelAddUserEventEdge(CpuContext ctx)
     {
         var handle = ctx[CpuRegister.Rdi];
+        if (!IsValidEqueue(handle))
+        {
+            return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_BAD_FILE_DESCRIPTOR;
+        }
+
         var registered = RegisterEvent(
             handle,
             ctx[CpuRegister.Rsi],
@@ -184,6 +228,11 @@ public static class KernelEventQueueCompatExports
     public static int KernelAddUserEvent(CpuContext ctx)
     {
         var handle = ctx[CpuRegister.Rdi];
+        if (!IsValidEqueue(handle))
+        {
+            return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_BAD_FILE_DESCRIPTOR;
+        }
+
         var registered = RegisterEvent(
             handle,
             ctx[CpuRegister.Rsi],
@@ -203,6 +252,11 @@ public static class KernelEventQueueCompatExports
     public static int KernelDeleteUserEvent(CpuContext ctx)
     {
         var handle = ctx[CpuRegister.Rdi];
+        if (!IsValidEqueue(handle))
+        {
+            return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_BAD_FILE_DESCRIPTOR;
+        }
+
         var deleted = DeleteRegisteredEvent(
             handle,
             ctx[CpuRegister.Rsi],
@@ -221,6 +275,11 @@ public static class KernelEventQueueCompatExports
     public static int KernelTriggerUserEvent(CpuContext ctx)
     {
         var handle = ctx[CpuRegister.Rdi];
+        if (!IsValidEqueue(handle))
+        {
+            return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_BAD_FILE_DESCRIPTOR;
+        }
+
         var triggered = TriggerRegisteredEvent(
             handle,
             ctx[CpuRegister.Rsi],
@@ -242,6 +301,11 @@ public static class KernelEventQueueCompatExports
     public static int KernelAddAmprEvent(CpuContext ctx)
     {
         var handle = ctx[CpuRegister.Rdi];
+        if (!IsValidEqueue(handle))
+        {
+            return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_BAD_FILE_DESCRIPTOR;
+        }
+
         var registered = RegisterEvent(
             handle,
             unchecked((uint)ctx[CpuRegister.Rsi]),
@@ -261,6 +325,11 @@ public static class KernelEventQueueCompatExports
     public static int KernelAddAmprSystemEvent(CpuContext ctx)
     {
         var handle = ctx[CpuRegister.Rdi];
+        if (!IsValidEqueue(handle))
+        {
+            return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_BAD_FILE_DESCRIPTOR;
+        }
+
         var registered = RegisterEvent(
             handle,
             unchecked((uint)ctx[CpuRegister.Rsi]),
@@ -280,6 +349,11 @@ public static class KernelEventQueueCompatExports
     public static int KernelDeleteAmprEvent(CpuContext ctx)
     {
         var handle = ctx[CpuRegister.Rdi];
+        if (!IsValidEqueue(handle))
+        {
+            return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_BAD_FILE_DESCRIPTOR;
+        }
+
         var deleted = DeleteRegisteredEvent(
             handle,
             unchecked((uint)ctx[CpuRegister.Rsi]),
@@ -298,6 +372,11 @@ public static class KernelEventQueueCompatExports
     public static int KernelDeleteAmprSystemEvent(CpuContext ctx)
     {
         var handle = ctx[CpuRegister.Rdi];
+        if (!IsValidEqueue(handle))
+        {
+            return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_BAD_FILE_DESCRIPTOR;
+        }
+
         var deleted = DeleteRegisteredEvent(
             handle,
             unchecked((uint)ctx[CpuRegister.Rsi]),
@@ -386,10 +465,15 @@ public static class KernelEventQueueCompatExports
 
         if (!IsValidEqueue(handle))
         {
-            return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_NOT_FOUND;
+            return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_BAD_FILE_DESCRIPTOR;
         }
 
-        if (eventsAddress == 0 || eventCapacity < 1)
+        if (eventsAddress == 0)
+        {
+            return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_FAULT;
+        }
+
+        if (eventCapacity < 1)
         {
             return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_INVALID_ARGUMENT;
         }
@@ -397,13 +481,23 @@ public static class KernelEventQueueCompatExports
         uint timeoutUsec = 0;
         if (timeoutAddress != 0 && !TryReadUInt32(ctx, timeoutAddress, out timeoutUsec))
         {
-            return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT;
+            return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_FAULT;
         }
 
-        var deliveredCount = DequeueEvents(ctx, handle, eventsAddress, eventCapacity);
+        if (outCountAddress != 0 && !TryWriteUInt32(ctx, outCountAddress, 0))
+        {
+            return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_FAULT;
+        }
+
+        var deliveredCount = DequeueEvents(ctx, handle, eventsAddress, eventCapacity, out var deliveryFault);
         if (outCountAddress != 0 && !TryWriteUInt32(ctx, outCountAddress, (uint)deliveredCount))
         {
-            return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT;
+            return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_FAULT;
+        }
+
+        if (deliveryFault)
+        {
+            return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_FAULT;
         }
 
         if (deliveredCount > 0)
@@ -412,61 +506,102 @@ public static class KernelEventQueueCompatExports
             return (int)OrbisGen2Result.ORBIS_GEN2_OK;
         }
 
-        if (timeoutAddress == 0 &&
-            GuestThreadExecution.RequestCurrentThreadBlock(
-                ctx,
-                "sceKernelWaitEqueue",
-                GetEventQueueWakeKey(handle),
-                new EqueueWaiter
-                {
-                    Ctx = ctx,
-                    Handle = handle,
-                    EventsAddress = eventsAddress,
-                    EventCapacity = eventCapacity,
-                    OutCountAddress = outCountAddress,
-                }))
+        if (timeoutAddress == 0)
         {
-            TraceEventQueue(ctx, "wait-block", handle);
-            return (int)OrbisGen2Result.ORBIS_GEN2_OK;
-        }
-
-        if (timeoutAddress != 0 && ctx.TryReadUInt64(timeoutAddress, out var timeoutRaw))
-        {
-            var timeoutMicros = timeoutRaw & 0xFFFF_FFFFUL;
-            var deadline = Environment.TickCount64 +
-                Math.Max(1L, (long)Math.Min(timeoutMicros / 1000, int.MaxValue));
-            lock (_eventQueueGate)
-            {
-                while (!HasPendingEvents(handle))
-                {
-                    var remaining = deadline - Environment.TickCount64;
-                    if (remaining <= 0)
+            if (GuestThreadExecution.RequestCurrentThreadBlock(
+                    ctx,
+                    "sceKernelWaitEqueue",
+                    GetEventQueueWakeKey(handle),
+                    new EqueueWaiter
                     {
-                        break;
-                    }
-
-                    Monitor.Wait(_eventQueueGate, (int)Math.Min(remaining, 100));
-                }
-            }
-
-            deliveredCount = DequeueEvents(ctx, handle, eventsAddress, eventCapacity);
-            if (outCountAddress != 0 && !TryWriteUInt32(ctx, outCountAddress, (uint)deliveredCount))
+                        Ctx = ctx,
+                        Handle = handle,
+                        EventsAddress = eventsAddress,
+                        EventCapacity = eventCapacity,
+                        OutCountAddress = outCountAddress,
+                    }))
             {
-                return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT;
-            }
-
-            if (deliveredCount > 0)
-            {
-                TraceEventQueue(ctx, "wait-timed-deliver", handle);
+                TraceEventQueue(ctx, "wait-block", handle);
                 return (int)OrbisGen2Result.ORBIS_GEN2_OK;
             }
 
-            TraceEventQueue(ctx, "wait-timeout", handle);
+            lock (_eventQueueGate)
+            {
+                while (_eventQueues.Contains(handle) &&
+                       (!_pendingEvents.TryGetValue(handle, out var pending) || pending.Count == 0))
+                {
+                    Monitor.Wait(_eventQueueGate);
+                }
+            }
+
+            if (!IsValidEqueue(handle))
+            {
+                return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_BAD_FILE_DESCRIPTOR;
+            }
+
+            deliveredCount = DequeueEvents(ctx, handle, eventsAddress, eventCapacity, out deliveryFault);
+            if (outCountAddress != 0 && !TryWriteUInt32(ctx, outCountAddress, (uint)deliveredCount))
+            {
+                return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_FAULT;
+            }
+
+            if (deliveryFault)
+            {
+                return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_FAULT;
+            }
+
+            return deliveredCount > 0
+                ? (int)OrbisGen2Result.ORBIS_GEN2_OK
+                : (int)OrbisGen2Result.ORBIS_GEN2_ERROR_TIMED_OUT;
+        }
+
+        if (timeoutUsec == 0)
+        {
+            TraceEventQueue(ctx, "wait-poll-empty", handle);
             return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_TIMED_OUT;
         }
 
-        TraceEventQueue(ctx, "wait", handle);
-        return (int)OrbisGen2Result.ORBIS_GEN2_OK;
+        var deadline = Environment.TickCount64 +
+            Math.Max(1L, (long)Math.Min(((ulong)timeoutUsec + 999UL) / 1000UL, int.MaxValue));
+        lock (_eventQueueGate)
+        {
+            while (_eventQueues.Contains(handle) &&
+                   (!_pendingEvents.TryGetValue(handle, out var pending) || pending.Count == 0))
+            {
+                var remaining = deadline - Environment.TickCount64;
+                if (remaining <= 0)
+                {
+                    break;
+                }
+
+                Monitor.Wait(_eventQueueGate, (int)Math.Min(remaining, 100));
+            }
+        }
+
+        if (!IsValidEqueue(handle))
+        {
+            return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_BAD_FILE_DESCRIPTOR;
+        }
+
+        deliveredCount = DequeueEvents(ctx, handle, eventsAddress, eventCapacity, out deliveryFault);
+        if (outCountAddress != 0 && !TryWriteUInt32(ctx, outCountAddress, (uint)deliveredCount))
+        {
+            return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_FAULT;
+        }
+
+        if (deliveryFault)
+        {
+            return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_FAULT;
+        }
+
+        if (deliveredCount > 0)
+        {
+            TraceEventQueue(ctx, "wait-timed-deliver", handle);
+            return (int)OrbisGen2Result.ORBIS_GEN2_OK;
+        }
+
+        TraceEventQueue(ctx, "wait-timeout", handle);
+        return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_TIMED_OUT;
     }
 
     public static bool IsValidEqueue(ulong handle)
@@ -805,10 +940,25 @@ public static class KernelEventQueueCompatExports
         int eventCapacity,
         ulong outCountAddress)
     {
-        var deliveredCount = DequeueEvents(ctx, handle, eventsAddress, eventCapacity);
+        if (!IsValidEqueue(handle))
+        {
+            return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_BAD_FILE_DESCRIPTOR;
+        }
+
+        if (outCountAddress != 0 && !TryWriteUInt32(ctx, outCountAddress, 0))
+        {
+            return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_FAULT;
+        }
+
+        var deliveredCount = DequeueEvents(ctx, handle, eventsAddress, eventCapacity, out var deliveryFault);
         if (outCountAddress != 0 && !TryWriteUInt32(ctx, outCountAddress, (uint)deliveredCount))
         {
-            return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT;
+            return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_FAULT;
+        }
+
+        if (deliveryFault)
+        {
+            return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_FAULT;
         }
 
         return deliveredCount > 0
@@ -853,8 +1003,14 @@ public static class KernelEventQueueCompatExports
         _ = GuestThreadExecution.Scheduler?.WakeBlockedThreads(GetEventQueueWakeKey(handle));
     }
 
-    private static int DequeueEvents(CpuContext ctx, ulong handle, ulong eventsAddress, int eventCapacity)
+    private static int DequeueEvents(
+        CpuContext ctx,
+        ulong handle,
+        ulong eventsAddress,
+        int eventCapacity,
+        out bool memoryFault)
     {
+        memoryFault = false;
         if (eventsAddress == 0 || eventCapacity <= 0)
         {
             return 0;
@@ -885,6 +1041,18 @@ public static class KernelEventQueueCompatExports
             {
                 if (!WriteKernelEvent(ctx, eventsAddress + ((ulong)i * KernelEventSize), events[i]))
                 {
+                    memoryFault = true;
+                    lock (_eventQueueGate)
+                    {
+                        if (_pendingEvents.TryGetValue(handle, out var queue))
+                        {
+                            for (var restoreIndex = count - 1; restoreIndex >= i; restoreIndex--)
+                            {
+                                queue.AddFirst(events[restoreIndex]);
+                            }
+                        }
+                    }
+
                     return i;
                 }
             }

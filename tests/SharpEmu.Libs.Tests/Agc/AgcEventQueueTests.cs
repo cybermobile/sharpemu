@@ -24,12 +24,15 @@ public sealed class AgcEventQueueTests
         var ctx = new CpuContext(memory, Generation.Gen5);
 
         const ulong handleOutAddress = BaseAddress + 0x100;
+        const ulong nameAddress = BaseAddress + 0x180;
         const ulong eventsAddress = BaseAddress + 0x200;
         const ulong outCountAddress = BaseAddress + 0x300;
         const ulong timeoutAddress = BaseAddress + 0x400;
 
         // Create an event queue.
+        memory.WriteCString(nameAddress, "agc-test");
         ctx[CpuRegister.Rdi] = handleOutAddress;
+        ctx[CpuRegister.Rsi] = nameAddress;
         var createResult = KernelEventQueueCompatExports.KernelCreateEqueue(ctx);
         Assert.Equal((int)OrbisGen2Result.ORBIS_GEN2_OK, createResult);
 
@@ -79,7 +82,10 @@ public sealed class AgcEventQueueTests
         var ctx = new CpuContext(memory, Generation.Gen5);
 
         const ulong handleOutAddress = BaseAddress + 0x100;
+        const ulong nameAddress = BaseAddress + 0x180;
+        memory.WriteCString(nameAddress, "agc-test");
         ctx[CpuRegister.Rdi] = handleOutAddress;
+        ctx[CpuRegister.Rsi] = nameAddress;
         var createResult = KernelEventQueueCompatExports.KernelCreateEqueue(ctx);
         Assert.Equal((int)OrbisGen2Result.ORBIS_GEN2_OK, createResult);
 

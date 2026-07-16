@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 using System.Text.Json;
+using SharpEmu.HLE.Host;
 
 namespace SharpEmu.GUI;
 
@@ -53,6 +54,9 @@ public sealed class GuiSettings
     /// <summary>Names of SHARPEMU_* switches set to "1" in the emulator's environment at launch.</summary>
     public List<string> EnvironmentToggles { get; set; } = new();
 
+    /// <summary>Global controller and keyboard mappings applied to guest pad input.</summary>
+    public HostInputProfile InputProfile { get; set; } = HostInputProfile.CreateDefault();
+
     /// <summary>
     /// Discord application ID used for Rich Presence; the default is the
     /// SharpEmu application. Override to rebrand what Discord shows as
@@ -71,7 +75,10 @@ public sealed class GuiSettings
             if (File.Exists(SettingsPath))
             {
                 var json = File.ReadAllText(SettingsPath);
-                return JsonSerializer.Deserialize<GuiSettings>(json, SerializerOptions) ?? new GuiSettings();
+                var settings = JsonSerializer.Deserialize<GuiSettings>(json, SerializerOptions) ?? new GuiSettings();
+                settings.InputProfile ??= HostInputProfile.CreateDefault();
+                settings.InputProfile.Normalize();
+                return settings;
             }
         }
         catch (Exception)
