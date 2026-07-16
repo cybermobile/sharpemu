@@ -14,6 +14,7 @@
   "Menu.View": "View",
   "Menu.Help": "Help",
   "Menu.Fullscreen": "Toggle fullscreen",
+  "Menu.ExitFullscreen": "Exit fullscreen",
   "Menu.Project": "Project repository",
   "Menu.Community": "Community Discord",
 

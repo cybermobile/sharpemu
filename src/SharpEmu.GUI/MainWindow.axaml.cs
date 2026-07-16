@@ -77,10 +77,19 @@ public partial class MainWindow : Window
     private long _navUpNextAt;
     private long _navDownNextAt;
     private bool _inputSettingsInitialized;
+    private WindowState _windowStateBeforeFullScreen = WindowState.Normal;
 
     public MainWindow()
     {
         InitializeComponent();
+
+        // Fullscreen recovery must win even when the focused child handles a
+        // key first (for example, an open menu or editable field).
+        AddHandler(
+            KeyDownEvent,
+            OnWindowKeyDown,
+            RoutingStrategies.Tunnel,
+            handledEventsToo: true);
 
         // Extended client chrome shares the macOS title bar with the traffic
         // lights. Leave their native hit targets clear while keeping the
@@ -123,7 +132,8 @@ public partial class MainWindow : Window
         MenuAddFolder.Click += async (_, _) => await AddFolderAsync();
         MenuRescan.Click += async (_, _) => await RescanLibraryAsync();
         MenuConsole.Click += (_, _) => ConsoleToggle.IsChecked = ConsoleToggle.IsChecked != true;
-        MenuFullscreen.Click += (_, args) => OnWindowFullScreen(this, args);
+        MenuFullscreen.Click += (_, _) => ToggleFullScreen();
+        ExitFullscreenButton.Click += (_, _) => ExitFullScreen();
         ConsoleToggle.IsCheckedChanged += (_, _) => ConsolePanel.IsVisible = ConsoleToggle.IsChecked == true && _consoleWindow is null;
 
         // The settings page edits _settings live, so a launch started while
@@ -455,6 +465,7 @@ public partial class MainWindow : Window
         MenuSettings.Header = loc.Get("Page.Options");
         MenuConsole.Header = loc.Get("Launch.Console");
         MenuFullscreen.Header = loc.Get("Menu.Fullscreen");
+        ExitFullscreenButton.Content = $"{loc.Get("Menu.ExitFullscreen")}   Esc";
         MenuGithub.Header = loc.Get("Menu.Project");
         MenuDiscord.Header = loc.Get("Menu.Community");
 
@@ -593,6 +604,7 @@ public partial class MainWindow : Window
     {
         AutomationProperties.SetName(SearchBox, SearchBox.Watermark ?? string.Empty);
         AutomationProperties.SetName(ConsoleSearchBox, ConsoleSearchBox.Watermark ?? string.Empty);
+        AutomationProperties.SetName(ExitFullscreenButton, Localization.Instance.Get("Menu.ExitFullscreen"));
         AutomationProperties.SetName(GameList, LibraryTabButton.Content?.ToString() ?? string.Empty);
 
         SetAccessibility(CpuEngineBox, CpuEngineLabel, CpuEngineDesc);
@@ -678,36 +690,59 @@ public partial class MainWindow : Window
         }
     }
 
-    private void OnKeyDown(object sender, KeyEventArgs args)
+    private void OnWindowKeyDown(object? sender, KeyEventArgs args)
     {
-        args.Handled = true;
-        switch (args.Key)
+        var isMacFullScreenShortcut = OperatingSystem.IsMacOS() &&
+            args.Key == Key.F &&
+            (args.KeyModifiers & (KeyModifiers.Control | KeyModifiers.Meta)) ==
+            (KeyModifiers.Control | KeyModifiers.Meta);
+
+        if (args.Key == Key.Escape && WindowState == WindowState.FullScreen)
         {
-            case Key.F11:
-                OnWindowFullScreen(this, new RoutedEventArgs());
-                break;
-            default:
-                args.Handled = false;
-                break;
+            ExitFullScreen();
+            args.Handled = true;
+        }
+        else if (args.Key == Key.F11 || isMacFullScreenShortcut)
+        {
+            ToggleFullScreen();
+            args.Handled = true;
         }
     }
 
-    private void OnWindowFullScreen(object sender, RoutedEventArgs args)
+    private void ToggleFullScreen()
     {
         if (WindowState == WindowState.FullScreen)
         {
-            WindowState = WindowState.Normal;
-            ExtendClientAreaChromeHints = ExtendClientAreaChromeHints.PreferSystemChrome;
-            TitleBar.IsVisible = true;
-            StatusBar.IsVisible = true;
+            ExitFullScreen();
         }
         else
         {
+            _windowStateBeforeFullScreen = WindowState == WindowState.Minimized
+                ? WindowState.Normal
+                : WindowState;
             WindowState = WindowState.FullScreen;
-            ExtendClientAreaChromeHints = ExtendClientAreaChromeHints.NoChrome;
-            TitleBar.IsVisible = false;
-            StatusBar.IsVisible = false;
         }
+    }
+
+    private void ExitFullScreen()
+    {
+        if (WindowState != WindowState.FullScreen)
+        {
+            return;
+        }
+
+        WindowState = _windowStateBeforeFullScreen;
+    }
+
+    private void UpdateFullScreenChrome()
+    {
+        var isFullScreen = WindowState == WindowState.FullScreen;
+        ExtendClientAreaChromeHints = isFullScreen
+            ? ExtendClientAreaChromeHints.NoChrome
+            : ExtendClientAreaChromeHints.PreferSystemChrome;
+        TitleBar.IsVisible = !isFullScreen;
+        StatusBar.IsVisible = !isFullScreen;
+        ExitFullscreenButton.IsVisible = isFullScreen;
     }
 
     private static void OpenExternalUrl(string url)
@@ -1571,6 +1606,13 @@ public partial class MainWindow : Window
         base.OnPropertyChanged(change);
         if (change.Property == WindowStateProperty)
         {
+            if (WindowState is not WindowState.FullScreen and not WindowState.Minimized)
+            {
+                _windowStateBeforeFullScreen = WindowState;
+            }
+
+            UpdateFullScreenChrome();
+
             if (WindowState == WindowState.Minimized)
             {
                 _sndPreview.Pause();

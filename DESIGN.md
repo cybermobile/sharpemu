@@ -43,7 +43,7 @@ SPDX-License-Identifier: GPL-2.0-or-later
 - State is never color-only: Pair color with text, outline, shape, or iconography for selection, focus, success, warning, and running state.
 - Progressive disclosure: Keep compatibility/debug controls and console output available but outside the primary launch path.
 - Separate play from tuning: Keep the common library-and-launch path stable; present global settings as a dedicated workspace and make per-game overrides explicit when they are introduced.
-- Safe input recovery: Controller and keyboard mappings always expose defaults, avoid capture-only dead ends, and remain usable without a connected controller.
+- Safe input recovery: Controller and keyboard mappings always expose defaults, avoid capture-only dead ends, and remain usable without a connected controller. Fullscreen always provides an on-screen exit plus Escape and F11 shortcuts, with Control-Command-F also supported on macOS.
 - Two interaction modes, not one compromise: Retain a compact desktop UI now; a future controller-first or Big Picture surface should be purpose-built rather than stretching desktop navigation into a console shell.
 - Quiet hierarchy: Use spacing, type weight, and restrained surfaces before glow, gradients, or heavy borders.
 - Tradeoffs: Preserve existing behavior and localization wiring before introducing richer navigation or a new component framework.
@@ -60,14 +60,14 @@ SPDX-License-Identifier: GPL-2.0-or-later
 ## Components
 
 - Existing components to reuse: Avalonia Fluent controls, card and pill styles, library tile `ListBox`, native `TabControl`, launch bar, and console panel. Button and toggle-button content stays centered on both axes across every workspace.
-- New/changed components: Desktop title/menu chrome, compact command toolbar, clear active workspace treatment, settings category rail, a Controller/Keyboard segmented mode switch, controller/keyboard binding rows, a transparent controller reference image, reset-to-defaults action, consistent control heights, visible focus rings, accessible search/toolbar metadata, improved empty state, larger artwork grid, and a visually distinct selected-game inspector.
+- New/changed components: Desktop title/menu chrome, compact command toolbar, clear active workspace treatment, settings category rail, a Controller/Keyboard segmented mode switch, controller/keyboard binding rows, a transparent controller reference image, reset-to-defaults action, consistent control heights, visible focus rings, accessible search/toolbar metadata, improved empty state, larger artwork grid, a visually distinct selected-game inspector, and a fullscreen exit overlay.
 - Variants and states: Default, pointer-over, pressed, keyboard-focus, selected/checked, disabled, loading, empty, error, running, and stopped.
 - Token/component ownership: Shared color, typography, shape, control-size, and state tokens live in `App.axaml`; page composition remains in `MainWindow.axaml`.
 
 ## Accessibility
 
 - Target standard: WCAG 2.2 AA principles where applicable to desktop UI, plus Avalonia automation semantics on macOS, Windows, and Linux.
-- Keyboard/focus behavior: Every action is reachable by Tab/Shift+Tab; focus-visible receives a two-pixel accent indicator; Enter/Space activate standard controls; existing shortcuts remain discoverable through automation metadata. Focusable controls inside custom window chrome always keep their pointer input; only non-interactive title-bar space may initiate a window drag.
+- Keyboard/focus behavior: Every action is reachable by Tab/Shift+Tab; focus-visible receives a two-pixel accent indicator; Enter/Space activate standard controls; existing shortcuts remain discoverable through automation metadata. Escape exits fullscreen and F11 toggles it even when a child control has handled the key. Focusable controls inside custom window chrome always keep their pointer input; only non-interactive title-bar space may initiate a window drag.
 - Contrast/readability: Normal text targets 4.5:1, large text and component boundaries 3:1, and secondary text is never communicated by opacity alone.
 - Screen-reader semantics: Name ambiguous/icon controls, associate fields with labels or help text, mark decorative imagery as raw, announce dynamic status politely, and expose stable automation IDs for primary actions. The controller image has concise alternative text but remains supplementary; every binding stays available through the labeled mapping list.
 - Reduced motion and sensory considerations: Keep motion brief and nonessential; avoid flashing and continuous animation outside an indeterminate progress state.

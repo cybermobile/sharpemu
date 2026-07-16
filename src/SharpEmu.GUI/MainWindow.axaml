@@ -14,8 +14,7 @@ SPDX-License-Identifier: GPL-2.0-or-later
         ExtendClientAreaToDecorationsHint="True"
         ExtendClientAreaChromeHints="PreferSystemChrome"
         ExtendClientAreaTitleBarHeightHint="64"
-        Icon="avares://SharpEmu.GUI/Assets/SharpEmu.ico"
-        KeyDown="OnKeyDown">
+        Icon="avares://SharpEmu.GUI/Assets/SharpEmu.ico">
 
   <Window.Resources>
     <DataTemplate x:Key="InputBindingRowTemplate">
@@ -33,7 +32,7 @@ SPDX-License-Identifier: GPL-2.0-or-later
     </ItemsPanelTemplate>
   </Window.Resources>
 
-  <Grid x:Name="MainShell" RowDefinitions="64,*,36">
+  <Grid x:Name="MainShell" RowDefinitions="Auto,*,Auto">
 
     <!-- Selected-game backdrop: key art behind the main content, dimmed by
          a scrim so tiles and text stay readable. Fades on selection. -->
@@ -60,7 +59,8 @@ SPDX-License-Identifier: GPL-2.0-or-later
     <!-- Desktop title/menu chrome. The left inset shares native title-bar
          space with macOS traffic lights. -->
     <Border x:Name="TitleBar" Grid.Row="0" Background="{StaticResource ChromeBrush}"
-            BorderBrush="{StaticResource CardBorderBrush}" BorderThickness="0,0,0,1">
+            BorderBrush="{StaticResource CardBorderBrush}" BorderThickness="0,0,0,1"
+            Height="64">
       <Grid ColumnDefinitions="Auto,*,Auto">
         <StackPanel x:Name="TitleBarContent" Grid.Column="0" Orientation="Horizontal" Spacing="10"
                     Margin="16,0,22,0" VerticalAlignment="Center">
@@ -787,5 +787,14 @@ SPDX-License-Identifier: GPL-2.0-or-later
                  Foreground="{StaticResource FaintBrush}" VerticalAlignment="Center" Margin="16,0"
                  AutomationProperties.LiveSetting="Polite" />
     </Grid>
+
+    <!-- Fullscreen must always have an on-screen recovery path in addition
+         to the Escape and F11 keyboard shortcuts. -->
+    <Button x:Name="ExitFullscreenButton" Grid.Row="1" ZIndex="100"
+            Classes="ghost" Content="Exit fullscreen   Esc" IsVisible="False"
+            HorizontalAlignment="Right" VerticalAlignment="Top" Margin="0,16,16,0"
+            AutomationProperties.Name="Exit fullscreen"
+            AutomationProperties.HelpText="Leave fullscreen with this button, Escape, or F11."
+            AutomationProperties.AutomationId="ExitFullscreenButton" />
   </Grid>
 </Window>
