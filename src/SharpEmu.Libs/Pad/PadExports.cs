@@ -23,6 +23,11 @@ public static class PadExports
     private const int PrimaryPadHandle = 1;
     private const int ControllerInformationSize = 0x1C;
     private const int PadDataSize = 0x78;
+
+    // Real firmware hands out small non-negative handles; 0 is valid. Some titles
+    // (Monster Truck Championship) read pad state with handle 0, and rejecting it
+    // leaves their controller/FFB init path polling a never-valid state forever.
+    private static bool IsPrimaryPadHandle(int handle) => handle is 0 or PrimaryPadHandle;
     private static readonly long InputSampleIntervalTicks = Math.Max(1, Stopwatch.Frequency / 1000);
     private static readonly HostInputProfile InputProfile = HostInputProfile.LoadFromEnvironment();
 
@@ -106,7 +111,7 @@ public static class PadExports
     public static int PadClose(CpuContext ctx)
     {
         var handle = unchecked((int)ctx[CpuRegister.Rdi]);
-        return handle == PrimaryPadHandle
+        return IsPrimaryPadHandle(handle)
             ? ctx.SetReturn(0)
             : ctx.SetReturn(OrbisPadErrorInvalidHandle);
     }
@@ -119,7 +124,7 @@ public static class PadExports
     public static int PadSetMotionSensorState(CpuContext ctx)
     {
         var handle = unchecked((int)ctx[CpuRegister.Rdi]);
-        return handle == PrimaryPadHandle
+        return IsPrimaryPadHandle(handle)
             ? ctx.SetReturn(0)
             : ctx.SetReturn(OrbisPadErrorInvalidHandle);
     }
@@ -133,7 +138,7 @@ public static class PadExports
     {
         var handle = unchecked((int)ctx[CpuRegister.Rdi]);
         var informationAddress = ctx[CpuRegister.Rsi];
-        if (handle != PrimaryPadHandle)
+        if (!IsPrimaryPadHandle(handle))
         {
             return ctx.SetReturn(OrbisPadErrorInvalidHandle);
         }
@@ -168,7 +173,7 @@ public static class PadExports
     {
         var handle = unchecked((int)ctx[CpuRegister.Rdi]);
         var informationAddress = ctx[CpuRegister.Rsi];
-        if (handle != PrimaryPadHandle)
+        if (!IsPrimaryPadHandle(handle))
         {
             return ctx.SetReturn(OrbisPadErrorInvalidHandle);
         }
@@ -236,7 +241,7 @@ public static class PadExports
     {
         var handle = unchecked((int)ctx[CpuRegister.Rdi]);
         var dataAddress = ctx[CpuRegister.Rsi];
-        if (handle != PrimaryPadHandle)
+        if (!IsPrimaryPadHandle(handle))
         {
             return ctx.SetReturn(OrbisPadErrorInvalidHandle);
         }
@@ -261,7 +266,7 @@ public static class PadExports
         var handle = unchecked((int)ctx[CpuRegister.Rdi]);
         var dataAddress = ctx[CpuRegister.Rsi];
         var count = unchecked((int)ctx[CpuRegister.Rdx]);
-        if (handle != PrimaryPadHandle)
+        if (!IsPrimaryPadHandle(handle))
         {
             return ctx.SetReturn(OrbisPadErrorInvalidHandle);
         }
@@ -295,7 +300,7 @@ public static class PadExports
     {
         var handle = unchecked((int)ctx[CpuRegister.Rdi]);
         var parameterAddress = ctx[CpuRegister.Rsi];
-        if (handle != PrimaryPadHandle)
+        if (!IsPrimaryPadHandle(handle))
         {
             return ctx.SetReturn(OrbisPadErrorInvalidHandle);
         }
@@ -339,7 +344,7 @@ public static class PadExports
     {
         var handle = unchecked((int)ctx[CpuRegister.Rdi]);
         var parameterAddress = ctx[CpuRegister.Rsi];
-        if (handle != PrimaryPadHandle)
+        if (!IsPrimaryPadHandle(handle))
         {
             return ctx.SetReturn(OrbisPadErrorInvalidHandle);
         }
@@ -369,7 +374,7 @@ public static class PadExports
     {
         var handle = unchecked((int)ctx[CpuRegister.Rdi]);
         var parameterAddress = ctx[CpuRegister.Rsi];
-        if (handle != PrimaryPadHandle)
+        if (!IsPrimaryPadHandle(handle))
         {
             return ctx.SetReturn(OrbisPadErrorInvalidHandle);
         }
@@ -398,7 +403,7 @@ public static class PadExports
     public static int PadResetLightBar(CpuContext ctx)
     {
         var handle = unchecked((int)ctx[CpuRegister.Rdi]);
-        if (handle != PrimaryPadHandle)
+        if (!IsPrimaryPadHandle(handle))
         {
             return ctx.SetReturn(OrbisPadErrorInvalidHandle);
         }
