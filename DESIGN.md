@@ -67,7 +67,7 @@ SPDX-License-Identifier: GPL-2.0-or-later
 ## Accessibility
 
 - Target standard: WCAG 2.2 AA principles where applicable to desktop UI, plus Avalonia automation semantics on macOS, Windows, and Linux.
-- Keyboard/focus behavior: Every action is reachable by Tab/Shift+Tab; focus-visible receives a two-pixel accent indicator; Enter/Space activate standard controls; existing shortcuts remain discoverable through automation metadata.
+- Keyboard/focus behavior: Every action is reachable by Tab/Shift+Tab; focus-visible receives a two-pixel accent indicator; Enter/Space activate standard controls; existing shortcuts remain discoverable through automation metadata. Focusable controls inside custom window chrome always keep their pointer input; only non-interactive title-bar space may initiate a window drag.
 - Contrast/readability: Normal text targets 4.5:1, large text and component boundaries 3:1, and secondary text is never communicated by opacity alone.
 - Screen-reader semantics: Name ambiguous/icon controls, associate fields with labels or help text, mark decorative imagery as raw, announce dynamic status politely, and expose stable automation IDs for primary actions. The controller image has concise alternative text but remains supplementary; every binding stays available through the labeled mapping list.
 - Reduced motion and sensory considerations: Keep motion brief and nonessential; avoid flashing and continuous animation outside an indeterminate progress state.

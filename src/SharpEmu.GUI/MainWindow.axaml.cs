@@ -733,10 +733,26 @@ public partial class MainWindow : Window
 
     private void OnTitleBarPointerPressed(object? sender, PointerPressedEventArgs e)
     {
-        if (e.GetCurrentPoint(this).Properties.IsLeftButtonPressed)
+        if (e.GetCurrentPoint(this).Properties.IsLeftButtonPressed &&
+            !IsInteractiveTitleBarSource(e.Source))
         {
             BeginMoveDrag(e);
         }
+    }
+
+    private bool IsInteractiveTitleBarSource(object? source)
+    {
+        for (var visual = source as Visual;
+             visual is not null && visual != TitleBar;
+             visual = visual.GetVisualParent())
+        {
+            if (visual is InputElement { Focusable: true })
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     // ---- Settings ----
