@@ -737,7 +737,11 @@ public partial class MainWindow : Window
     private void UpdateFullScreenChrome()
     {
         var isFullScreen = WindowState == WindowState.FullScreen;
-        ExtendClientAreaChromeHints = isFullScreen
+        // Native macOS fullscreen owns the reveal-on-hover title bar. Keeping
+        // system chrome lets its close/minimize/fullscreen controls return
+        // when the pointer reaches the top; NoChrome explicitly removes them.
+        var preserveNativeMacChrome = isFullScreen && OperatingSystem.IsMacOS();
+        ExtendClientAreaChromeHints = isFullScreen && !preserveNativeMacChrome
             ? ExtendClientAreaChromeHints.NoChrome
             : ExtendClientAreaChromeHints.PreferSystemChrome;
         TitleBar.IsVisible = !isFullScreen;

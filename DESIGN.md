@@ -76,7 +76,7 @@ SPDX-License-Identifier: GPL-2.0-or-later
 
 - Supported breakpoints/devices: Desktop windows from 980 px wide through large maximized displays; Windows, Linux, and macOS.
 - Layout adaptations: The library uses a reflowing wrap panel; content width is capped; toolbars wrap or condense before controls clip; options remain scrollable. General, Controls, and Environment share one stable settings-workspace width and scrollbar gutter so category changes never move the rail or card edges. The input-device switch stays above the active mode, and the controller image scales proportionally without horizontal scrolling.
-- Touch/hover differences: Interactive targets are at least 36 px high on desktop; hover is supplemental and never the sole state indicator.
+- Touch/hover differences: Interactive targets are at least 36 px high on desktop; hover is supplemental and never the sole state indicator. macOS fullscreen retains native system chrome so moving the pointer to the screen top can reveal the platform window controls; the in-content exit button remains available without hover.
 
 ## Interaction states
 
