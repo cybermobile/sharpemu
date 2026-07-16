@@ -115,7 +115,8 @@ SPDX-License-Identifier: GPL-2.0-or-later
         <WrapPanel Grid.Column="1" Orientation="Horizontal" HorizontalAlignment="Right"
                    VerticalAlignment="Center" AutomationProperties.LandmarkType="Navigation">
           <TextBox x:Name="SearchBox" Watermark="Search library…" Width="240" Margin="3,0,10,0"
-                   VerticalAlignment="Center" AutomationProperties.Name="Search library"
+                   VerticalAlignment="Center" VerticalContentAlignment="Center"
+                   AutomationProperties.Name="Search library"
                    AutomationProperties.HelpText="Filter games by title or title ID."
                    AutomationProperties.AutomationId="LibrarySearchBox" />
           <Button x:Name="LibraryTabButton" Classes="toolbarNav active" Content="Library" Margin="3,0"
