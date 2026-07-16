@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 using Avalonia;
+using Avalonia.Automation;
 using Avalonia.Collections;
 using Avalonia.Controls;
 using Avalonia.Input;
@@ -79,6 +80,14 @@ public partial class MainWindow : Window
     {
         InitializeComponent();
 
+        // Extended client chrome shares the macOS title bar with the traffic
+        // lights. Leave their native hit targets clear while keeping the
+        // compact inset used by Windows and Linux.
+        if (OperatingSystem.IsMacOS())
+        {
+            TitleBarContent.Margin = new Thickness(76, 0, 16, 0);
+        }
+
         GameList.ItemsSource = _visibleGames;
         ConsoleList.ItemsSource = _consoleLines;
 
@@ -103,10 +112,8 @@ public partial class MainWindow : Window
         RescanButton.Click += async (_, _) => await RescanLibraryAsync();
         OpenFileButton.Click += async (_, _) => await OpenFileAsync();
         LaunchButton.Click += (_, _) => LaunchSelected();
-        StopButton.Click += (_, _) => _emulator?.Stop();
         ClearLogButton.Click += (_, _) => { _consoleLines.Clear(); _allConsoleLines.Clear(); };
         StopButton.Click += (_, _) => StopEmulator();
-        ClearLogButton.Click += (_, _) => _consoleLines.Clear();
         CopyLogButton.Click += async (_, _) => await CopyConsoleAsync();
         DetachConsoleButton.Click += (_, _) => ShowConsoleWindow();
         LibraryTabButton.Click += (_, _) => SetActivePage(0);
@@ -345,8 +352,8 @@ public partial class MainWindow : Window
 
     private int TilesPerRow()
     {
-        // Tile footprint: 128 content + 20 item padding + 10 item margin.
-        const double TileOuterWidth = 158;
+        // Tile footprint: 148 content + 16 item padding + 8 item margin.
+        const double TileOuterWidth = 172;
         var width = GameList.Bounds.Width;
         return width > TileOuterWidth ? (int)(width / TileOuterWidth) : 1;
     }
@@ -498,8 +505,47 @@ public partial class MainWindow : Window
         GithubButton.Content = loc.Get("About.GithubButton");
         DiscordButton.Content = loc.Get("About.DiscordButton");
 
+        ApplyAccessibilityLabels();
+
         UpdateEmptyStateTexts();
         UpdateSelectedGameTexts();
+    }
+
+    private void ApplyAccessibilityLabels()
+    {
+        AutomationProperties.SetName(SearchBox, SearchBox.Watermark ?? string.Empty);
+        AutomationProperties.SetName(ConsoleSearchBox, ConsoleSearchBox.Watermark ?? string.Empty);
+        AutomationProperties.SetName(GameList, LibraryTabButton.Content?.ToString() ?? string.Empty);
+
+        SetAccessibility(CpuEngineBox, CpuEngineLabel, CpuEngineDesc);
+        SetAccessibility(StrictToggle, StrictLabel, StrictDesc);
+        SetAccessibility(LogLevelBox, LogLevelLabel, LogLevelDesc);
+        SetAccessibility(TraceImportsBox, TraceImportsLabel, TraceImportsDesc);
+        SetAccessibility(LogToFileToggle, LogToFileLabel, LogToFileDesc);
+        SetAccessibility(
+            SelectLogFilePathButton,
+            LogFilePathLabel.Text,
+            LogFilePathText.Text);
+        SetAccessibility(OverrideLogFileToggle, OverrideLogFileLabel, OverrideLogFileDesc);
+        SetAccessibility(LanguageBox, LanguageLabel, LanguageDesc);
+        SetAccessibility(TitleMusicToggle, TitleMusicLabel, TitleMusicDesc);
+        SetAccessibility(DiscordToggle, DiscordLabel, DiscordDesc);
+
+        SetAccessibility(EnvBthidToggle, "SHARPEMU_BTHID_UNAVAILABLE", EnvBthidDesc.Text);
+        SetAccessibility(EnvLoopGuardToggle, "SHARPEMU_DISABLE_IMPORT_LOOP_GUARD", EnvLoopGuardDesc.Text);
+        SetAccessibility(EnvVkValidationToggle, "SHARPEMU_VK_VALIDATION", EnvVkValidationDesc.Text);
+        SetAccessibility(EnvDumpSpirvToggle, "SHARPEMU_DUMP_SPIRV", EnvDumpSpirvDesc.Text);
+        SetAccessibility(EnvLogDirectMemoryToggle, "SHARPEMU_LOG_DIRECT_MEMORY", EnvLogDirectMemoryDesc.Text);
+        SetAccessibility(EnvLogNpToggle, "SHARPEMU_LOG_NP", EnvLogNpDesc.Text);
+    }
+
+    private static void SetAccessibility(Control control, TextBlock label, TextBlock description) =>
+        SetAccessibility(control, label.Text, description.Text);
+
+    private static void SetAccessibility(Control control, string? name, string? helpText)
+    {
+        AutomationProperties.SetName(control, name ?? string.Empty);
+        AutomationProperties.SetHelpText(control, helpText ?? string.Empty);
     }
 
     // ---- Discord Rich Presence ----
@@ -659,6 +705,9 @@ public partial class MainWindow : Window
         LogFilePathText.Text = string.IsNullOrWhiteSpace(_settings.LogFilePath)
             ? Localization.Instance.Get("Options.LogFilePath.Default")
             : _settings.LogFilePath;
+        AutomationProperties.SetHelpText(
+            SelectLogFilePathButton,
+            LogFilePathText.Text ?? string.Empty);
     }
 
     private async Task SelectLogFilePathAsync()

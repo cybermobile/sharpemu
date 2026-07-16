@@ -18,14 +18,16 @@ SPDX-License-Identifier: GPL-2.0-or-later
     </LinearGradientBrush>
 
     <SolidColorBrush x:Key="ChromeBrush" Color="#090C12" />
-    <SolidColorBrush x:Key="CardBrush" Color="#141924" />
-    <SolidColorBrush x:Key="CardBorderBrush" Color="#232B3A" />
-    <SolidColorBrush x:Key="ElevatedBrush" Color="#1B2230" />
-    <SolidColorBrush x:Key="TextBrush" Color="#E8ECF4" />
-    <SolidColorBrush x:Key="MutedBrush" Color="#8B94A7" />
-    <SolidColorBrush x:Key="FaintBrush" Color="#5A6478" />
+    <SolidColorBrush x:Key="CardBrush" Color="#151A25" />
+    <SolidColorBrush x:Key="CardBorderBrush" Color="#2A3343" />
+    <SolidColorBrush x:Key="ElevatedBrush" Color="#1C2331" />
+    <SolidColorBrush x:Key="InputBrush" Color="#10151F" />
+    <SolidColorBrush x:Key="TextBrush" Color="#F1F4F9" />
+    <SolidColorBrush x:Key="MutedBrush" Color="#A7B0C1" />
+    <SolidColorBrush x:Key="FaintBrush" Color="#818CA1" />
     <SolidColorBrush x:Key="AccentBrush" Color="#7C5CFC" />
     <SolidColorBrush x:Key="AccentHoverBrush" Color="#8F73FF" />
+    <SolidColorBrush x:Key="AccentSubtleBrush" Color="#2B2547" />
     <SolidColorBrush x:Key="DangerBrush" Color="#E5484D" />
     <SolidColorBrush x:Key="DangerHoverBrush" Color="#F2555A" />
     <SolidColorBrush x:Key="SuccessBrush" Color="#46C46B" />
@@ -38,6 +40,7 @@ SPDX-License-Identifier: GPL-2.0-or-later
 
     <Style Selector="Window">
       <Setter Property="FontFamily" Value="Inter, Segoe UI, sans-serif" />
+      <Setter Property="FontSize" Value="14" />
       <Setter Property="Foreground" Value="{StaticResource TextBrush}" />
     </Style>
 
@@ -70,13 +73,60 @@ SPDX-License-Identifier: GPL-2.0-or-later
 
     <Style Selector="TextBox">
       <Setter Property="CornerRadius" Value="8" />
+      <Setter Property="MinHeight" Value="38" />
+      <Setter Property="Background" Value="{StaticResource InputBrush}" />
+      <Setter Property="BorderBrush" Value="{StaticResource CardBorderBrush}" />
+    </Style>
+
+    <Style Selector="ComboBox">
+      <Setter Property="MinHeight" Value="38" />
+    </Style>
+
+    <Style Selector="NumericUpDown">
+      <Setter Property="MinHeight" Value="38" />
+    </Style>
+
+    <Style Selector="Button">
+      <Setter Property="MinHeight" Value="38" />
+    </Style>
+
+    <Style Selector="ToggleButton">
+      <Setter Property="MinHeight" Value="38" />
+    </Style>
+
+    <Style Selector="Button:disabled">
+      <Setter Property="Opacity" Value="0.52" />
+    </Style>
+
+    <Style Selector="ToggleButton:disabled">
+      <Setter Property="Opacity" Value="0.52" />
+    </Style>
+
+    <Style Selector="Button:focus-visible">
+      <Setter Property="BorderBrush" Value="{StaticResource AccentHoverBrush}" />
+      <Setter Property="BorderThickness" Value="2" />
+    </Style>
+
+    <Style Selector="ToggleButton:focus-visible">
+      <Setter Property="BorderBrush" Value="{StaticResource AccentHoverBrush}" />
+      <Setter Property="BorderThickness" Value="2" />
+    </Style>
+
+    <Style Selector="TextBox:focus-visible">
+      <Setter Property="BorderBrush" Value="{StaticResource AccentHoverBrush}" />
+      <Setter Property="BorderThickness" Value="2" />
+    </Style>
+
+    <Style Selector="ComboBox:focus-visible">
+      <Setter Property="BorderBrush" Value="{StaticResource AccentHoverBrush}" />
+      <Setter Property="BorderThickness" Value="2" />
     </Style>
 
     <Style Selector="Button.accent">
       <Setter Property="Background" Value="{StaticResource AccentBrush}" />
       <Setter Property="Foreground" Value="White" />
       <Setter Property="FontWeight" Value="SemiBold" />
-      <Setter Property="Padding" Value="22,10" />
+      <Setter Property="Padding" Value="22,9" />
       <Setter Property="CornerRadius" Value="8" />
     </Style>
     <Style Selector="Button.accent:pointerover /template/ ContentPresenter#PART_ContentPresenter">
@@ -88,7 +138,7 @@ SPDX-License-Identifier: GPL-2.0-or-later
       <Setter Property="Background" Value="{StaticResource DangerBrush}" />
       <Setter Property="Foreground" Value="White" />
       <Setter Property="FontWeight" Value="SemiBold" />
-      <Setter Property="Padding" Value="22,10" />
+      <Setter Property="Padding" Value="22,9" />
       <Setter Property="CornerRadius" Value="8" />
     </Style>
     <Style Selector="Button.danger:pointerover /template/ ContentPresenter#PART_ContentPresenter">
@@ -101,7 +151,7 @@ SPDX-License-Identifier: GPL-2.0-or-later
       <Setter Property="BorderBrush" Value="{StaticResource CardBorderBrush}" />
       <Setter Property="BorderThickness" Value="1" />
       <Setter Property="Foreground" Value="{StaticResource TextBrush}" />
-      <Setter Property="Padding" Value="12,7" />
+      <Setter Property="Padding" Value="14,8" />
       <Setter Property="CornerRadius" Value="8" />
     </Style>
     <Style Selector="Button.ghost:pointerover /template/ ContentPresenter#PART_ContentPresenter">
@@ -114,7 +164,7 @@ SPDX-License-Identifier: GPL-2.0-or-later
       <Setter Property="BorderBrush" Value="{StaticResource CardBorderBrush}" />
       <Setter Property="BorderThickness" Value="1" />
       <Setter Property="Foreground" Value="{StaticResource TextBrush}" />
-      <Setter Property="Padding" Value="12,7" />
+      <Setter Property="Padding" Value="14,8" />
       <Setter Property="CornerRadius" Value="8" />
     </Style>
     <Style Selector="ToggleButton.ghost:pointerover /template/ ContentPresenter#PART_ContentPresenter">
@@ -127,18 +177,25 @@ SPDX-License-Identifier: GPL-2.0-or-later
       <Setter Property="Foreground" Value="{StaticResource TextBrush}" />
     </Style>
 
-    <!-- Top-level page switcher (Library / Options): plain transparent
-         buttons, not TabItem, so there is no Fluent selected-tab underline.
-         The active page is conveyed by brightness alone; LB/RB gamepad
-         hints flank the pair. -->
+    <Style Selector="Border.segmentGroup">
+      <Setter Property="Background" Value="{StaticResource CardBrush}" />
+      <Setter Property="BorderBrush" Value="{StaticResource CardBorderBrush}" />
+      <Setter Property="BorderThickness" Value="1" />
+      <Setter Property="CornerRadius" Value="10" />
+      <Setter Property="Padding" Value="4" />
+    </Style>
+
+    <!-- Top-level page switcher. Active state uses contrast, fill, and a
+         border so it remains legible without relying on color alone. -->
     <Style Selector="Button.segment">
       <Setter Property="Background" Value="Transparent" />
-      <Setter Property="BorderThickness" Value="0" />
+      <Setter Property="BorderBrush" Value="Transparent" />
+      <Setter Property="BorderThickness" Value="1" />
       <Setter Property="Foreground" Value="{StaticResource MutedBrush}" />
-      <Setter Property="FontSize" Value="22" />
-      <Setter Property="FontWeight" Value="Bold" />
-      <Setter Property="Padding" Value="6,4" />
-      <Setter Property="CornerRadius" Value="8" />
+      <Setter Property="FontSize" Value="14" />
+      <Setter Property="FontWeight" Value="SemiBold" />
+      <Setter Property="Padding" Value="18,8" />
+      <Setter Property="CornerRadius" Value="7" />
     </Style>
     <Style Selector="Button.segment:pointerover /template/ ContentPresenter#PART_ContentPresenter">
       <Setter Property="Background" Value="{StaticResource ElevatedBrush}" />
@@ -146,13 +203,8 @@ SPDX-License-Identifier: GPL-2.0-or-later
     </Style>
     <Style Selector="Button.segment.active">
       <Setter Property="Foreground" Value="{StaticResource TextBrush}" />
-    </Style>
-
-    <!-- Gamepad shoulder-button hint chip (LB/RB, L1/R1). -->
-    <Style Selector="Border.padHint">
-      <Setter Property="Background" Value="{StaticResource ElevatedBrush}" />
-      <Setter Property="CornerRadius" Value="6" />
-      <Setter Property="Padding" Value="8,3" />
+      <Setter Property="Background" Value="{StaticResource AccentSubtleBrush}" />
+      <Setter Property="BorderBrush" Value="{StaticResource AccentBrush}" />
     </Style>
 
     <Style Selector="ContextMenu">
@@ -184,9 +236,9 @@ SPDX-License-Identifier: GPL-2.0-or-later
 
     <!-- Cover-art library grid -->
     <Style Selector="ListBox.tileGrid ListBoxItem">
-      <Setter Property="Padding" Value="10" />
-      <Setter Property="Margin" Value="5" />
-      <Setter Property="CornerRadius" Value="14" />
+      <Setter Property="Padding" Value="8" />
+      <Setter Property="Margin" Value="4" />
+      <Setter Property="CornerRadius" Value="12" />
       <Setter Property="Background" Value="Transparent" />
       <Setter Property="BorderThickness" Value="1" />
       <Setter Property="BorderBrush" Value="Transparent" />
@@ -211,10 +263,14 @@ SPDX-License-Identifier: GPL-2.0-or-later
       <Setter Property="Background" Value="{StaticResource TileSelectedBrush}" />
       <Setter Property="BorderBrush" Value="{StaticResource AccentHoverBrush}" />
     </Style>
+    <Style Selector="ListBox.tileGrid ListBoxItem:focus-visible /template/ ContentPresenter#PART_ContentPresenter">
+      <Setter Property="BorderBrush" Value="{StaticResource AccentHoverBrush}" />
+      <Setter Property="BorderThickness" Value="2" />
+    </Style>
 
     <Style Selector="Border.coverShadow">
       <Setter Property="CornerRadius" Value="10" />
-      <Setter Property="BoxShadow" Value="0 6 14 0 #55000000" />
+      <Setter Property="BoxShadow" Value="0 8 18 0 #50000000" />
     </Style>
     <Style Selector="Border.coverClip">
       <Setter Property="CornerRadius" Value="10" />
