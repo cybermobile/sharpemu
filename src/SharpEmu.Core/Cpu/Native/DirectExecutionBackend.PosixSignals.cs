@@ -4,6 +4,7 @@
 using System;
 using System.Runtime.InteropServices;
 using System.Threading;
+using SharpEmu.Core.Cpu.Emulation;
 using SharpEmu.HLE;
 
 namespace SharpEmu.Core.Cpu.Native;
@@ -47,21 +48,12 @@ public sealed unsafe partial class DirectExecutionBackend
 	private const int DarwinUcontextMcontextOffset = 48;
 	private const int DarwinMcontextErrOffset = 4;
 	private const int DarwinMcontextFaultAddressOffset = 8;
+	private const int DarwinMcontextXmm0Offset = 352;
 	private const int LinuxUcontextGregsOffset = 40;
 	private const int LinuxGregsErrOffset = 19 * 8;
-
-	// The kernel's x86-64 sigcontext places the FXSAVE-image pointer right
-	// after the general registers it hands to the handler: err(152)
-	// trapno(160) oldmask(168) cr2(176) fpstate(184), all relative to
-	// GetPosixRegisterBase. glibc and musl both overlay this kernel layout
-	// verbatim (glibc's mcontext_t.fpregs is the same slot), so the offset
-	// is libc-independent. Inside the FXSAVE image the XMM registers start
-	// at +160 (32-byte header + 8 legacy x87/MMX slots x 16 bytes) - the
-	// same relative position they occupy in the Win64 CONTEXT's FltSave
-	// area (Win64ContextXmm0Offset = 256 + 160).
-	private const int LinuxGregsFpstateOffset = 184;
-	private const int FxsaveXmmOffset = 160;
-	private const int XmmBlockSize = 16 * 16;
+	private const int LinuxMcontextFpregsOffset = 23 * 8;
+	private const int LinuxFpregsXmm0Offset = 160;
+	private const int PosixXmmRegisterBytes = 16 * 16;
 
 	// Byte offsets of the general registers relative to GetPosixRegisterBase,
 	// ordered to match the contiguous Win64 CONTEXT block CTX_RAX..CTX_RIP
@@ -78,6 +70,7 @@ public sealed unsafe partial class DirectExecutionBackend
 	private static readonly nint[] _posixPreviousActions = new nint[32];
 	private static int _posixSignalTraceCount;
 	private static long _perfSignalCount;
+	private static int _fatalGuestSignalCount;
 	private static readonly bool _perfSignalCounter =
 		string.Equals(Environment.GetEnvironmentVariable("SHARPEMU_PERF_MEM"), "1", StringComparison.Ordinal);
 
@@ -88,8 +81,7 @@ public sealed unsafe partial class DirectExecutionBackend
 	// XMM registers in the CONTEXT scratch buffer and writes to them will
 	// reach the mcontext on resume. Gates recovery paths (SSE4a EXTRQ/
 	// INSERTQ) that would otherwise compute results from a zeroed XMM area
-	// and silently discard what they "wrote". Darwin is not bridged yet, so
-	// the flag stays false there.
+	// and silently discard what they "wrote".
 	[ThreadStatic]
 	private static bool _posixXmmContextBridged;
 
@@ -143,8 +135,8 @@ public sealed unsafe partial class DirectExecutionBackend
 	{
 		byte* fakeUcontext = stackalloc byte[512];
 		new Span<byte>(fakeUcontext, 512).Clear();
-		byte* fakeMcontext = stackalloc byte[512];
-		new Span<byte>(fakeMcontext, 512).Clear();
+		byte* fakeMcontext = stackalloc byte[768];
+		new Span<byte>(fakeMcontext, 768).Clear();
 		if (OperatingSystem.IsMacOS())
 		{
 			*(byte**)(fakeUcontext + DarwinUcontextMcontextOffset) = fakeMcontext;
@@ -175,6 +167,8 @@ public sealed unsafe partial class DirectExecutionBackend
 			// scan and the PRT range check, then bails out silently.
 			record.ExceptionInformation[1] = 0x70000;
 			_ = TryHandleLazyCommittedPage(&record, 0, 0);
+			_ = TryRecoverNullTlsCounterIncrement(&record, contextRecord, 0);
+			_ = NullTlsCounterIncrementFastPath.Matches(ReadOnlySpan<byte>.Empty);
 			ChainPreviousPosixAction(0, 0, 0);
 		}
 		finally
@@ -228,6 +222,7 @@ public sealed unsafe partial class DirectExecutionBackend
 				Console.Error.WriteLine($"[PERF][MEM] posix_faults={n}");
 			}
 		}
+		var terminateGuestSession = false;
 		try
 		{
 			// Guest-image write tracking runs first: it only needs the fault
@@ -245,6 +240,11 @@ public sealed unsafe partial class DirectExecutionBackend
 			{
 				return;
 			}
+
+			terminateGuestSession = ShouldTerminateAfterUnrecoveredPosixFault(
+				_posixSignalWarmup,
+				ReferenceEquals(_activeExecutionBackend, _posixSignalBackend),
+				_activeEntryReturnSentinelRip);
 		}
 		catch
 		{
@@ -255,8 +255,28 @@ public sealed unsafe partial class DirectExecutionBackend
 			_posixSignalHandlerDepth--;
 		}
 
+		if (terminateGuestSession)
+		{
+			var fatalCount = Interlocked.Increment(ref _fatalGuestSignalCount);
+			if (fatalCount == 1)
+			{
+				Console.Error.WriteLine(
+					$"[LOADER][FATAL] Unrecovered guest signal {signal}; terminating the emulation process to prevent a fault loop.");
+				Console.Error.Flush();
+			}
+
+			PosixImmediateExit(4);
+			return;
+		}
+
 		ChainPreviousPosixAction(signal, siginfo, ucontext);
 	}
+
+	internal static bool ShouldTerminateAfterUnrecoveredPosixFault(
+		bool signalWarmup,
+		bool activeGuestExecution,
+		ulong guestReturnSentinel) =>
+		!signalWarmup && activeGuestExecution && guestReturnSentinel >= 0x10000;
 
 	private static bool TryHandlePosixFault(int signal, nint siginfo, nint ucontext)
 	{
@@ -273,26 +293,13 @@ public sealed unsafe partial class DirectExecutionBackend
 		{
 			WriteCtxU64(contextRecord, CTX_RAX + i * 8, *(ulong*)(registers + offsets[i]));
 		}
-
-		// Bridge the XMM registers alongside the GPRs where the layout is
-		// known: on Linux the fpstate pointer and FXSAVE image are kernel
-		// ABI, so recovery paths that read or write XMM state (SSE4a
-		// EXTRQ/INSERTQ) see the live registers and their writes reach the
-		// guest through sigreturn.
-		byte* fpstate = null;
-		if (OperatingSystem.IsLinux())
+		byte* xmmRegisters = GetPosixXmmRegisterBase(registers);
+		if (xmmRegisters != null)
 		{
-			fpstate = *(byte**)(registers + LinuxGregsFpstateOffset);
-			if (fpstate != null)
-			{
-				Buffer.MemoryCopy(
-					fpstate + FxsaveXmmOffset,
-					contextRecord + Win64ContextXmm0Offset,
-					XmmBlockSize,
-					XmmBlockSize);
-			}
+			new ReadOnlySpan<byte>(xmmRegisters, PosixXmmRegisterBytes)
+				.CopyTo(new Span<byte>(contextRecord + CTX_XMM0, PosixXmmRegisterBytes));
 		}
-		_posixXmmContextBridged = fpstate != null;
+		_posixXmmContextBridged = xmmRegisters != null;
 
 		EXCEPTION_RECORD record = default;
 		record.ExceptionAddress = (void*)ReadCtxU64(contextRecord, CTX_RIP);
@@ -322,7 +329,8 @@ public sealed unsafe partial class DirectExecutionBackend
 		pointers.ContextRecord = contextRecord;
 
 		int traceIndex = _posixSignalWarmup ? 0 : Interlocked.Increment(ref _posixSignalTraceCount);
-		bool traceSignal = traceIndex > 0 && (traceIndex <= 16 || traceIndex % 1024 == 0 ||
+		bool traceSignal = traceIndex > 0 && (traceIndex <= 16 ||
+			(signal != PosixSigIll && traceIndex % 1024 == 0) ||
 			string.Equals(Environment.GetEnvironmentVariable("SHARPEMU_LOG_POSIX_SIGNALS"), "1", StringComparison.Ordinal));
 		if (traceSignal)
 		{
@@ -359,15 +367,23 @@ public sealed unsafe partial class DirectExecutionBackend
 		{
 			*(ulong*)(registers + offsets[i]) = ReadCtxU64(contextRecord, CTX_RAX + i * 8);
 		}
-		if (fpstate != null)
+		if (xmmRegisters != null)
 		{
-			Buffer.MemoryCopy(
-				contextRecord + Win64ContextXmm0Offset,
-				fpstate + FxsaveXmmOffset,
-				XmmBlockSize,
-				XmmBlockSize);
+			new ReadOnlySpan<byte>(contextRecord + CTX_XMM0, PosixXmmRegisterBytes)
+				.CopyTo(new Span<byte>(xmmRegisters, PosixXmmRegisterBytes));
 		}
 		return true;
+	}
+
+	private static byte* GetPosixXmmRegisterBase(byte* registers)
+	{
+		if (OperatingSystem.IsMacOS())
+		{
+			return registers + DarwinMcontextXmm0Offset;
+		}
+
+		byte* floatingPointState = *(byte**)(registers + LinuxMcontextFpregsOffset);
+		return floatingPointState == null ? null : floatingPointState + LinuxFpregsXmm0Offset;
 	}
 
 	private static byte* GetPosixRegisterBase(nint ucontext)
@@ -456,4 +472,7 @@ public sealed unsafe partial class DirectExecutionBackend
 
 	[DllImport("libc", SetLastError = true)]
 	private static extern int sigaction(int signum, void* act, void* oldact);
+
+	[DllImport("libc", EntryPoint = "_exit")]
+	private static extern void PosixImmediateExit(int status);
 }

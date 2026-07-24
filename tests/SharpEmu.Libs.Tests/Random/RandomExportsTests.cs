@@ -13,6 +13,18 @@ public sealed class RandomExportsTests
     private const int RandomErrorInvalid = unchecked((int)0x817C0016);
 
     [Fact]
+    public void ExportRegistersForGen5()
+    {
+        var manager = new ModuleManager();
+        manager.RegisterExports(
+            SharpEmu.Generated.SysAbiExportRegistry.CreateExports(Generation.Gen5));
+
+        Assert.True(manager.TryGetExport("PI7jIZj4pcE", out var export));
+        Assert.Equal("sceRandomGetRandomNumber", export.Name);
+        Assert.Equal("libSceRandom", export.LibraryName);
+    }
+
+    [Fact]
     public void GetRandomNumberWritesRequestedBytes()
     {
         var memory = new FakeCpuMemory(BaseAddress, 64);
@@ -43,6 +55,23 @@ public sealed class RandomExportsTests
         var ctx = CreateContext(memory, 0, 0);
 
         Assert.Equal(0, RandomExports.RandomGetRandomNumber(ctx));
+    }
+
+    [Fact]
+    public void GetRandomNumberDoesNotTouchBytesOutsideRequestedRange()
+    {
+        var memory = new FakeCpuMemory(BaseAddress, 32);
+        Span<byte> initial = stackalloc byte[32];
+        initial.Fill(0xA5);
+        Assert.True(memory.TryWrite(BaseAddress, initial));
+        var ctx = CreateContext(memory, BaseAddress + 8, 16);
+
+        Assert.Equal(0, RandomExports.RandomGetRandomNumber(ctx));
+
+        Span<byte> result = stackalloc byte[32];
+        Assert.True(memory.TryRead(BaseAddress, result));
+        Assert.Equal(initial[..8].ToArray(), result[..8].ToArray());
+        Assert.Equal(initial[24..].ToArray(), result[24..].ToArray());
     }
 
     [Fact]

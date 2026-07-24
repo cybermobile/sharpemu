@@ -78,6 +78,7 @@ public static partial class AgcExports
     private const uint RDmaData = 0x19;
     private const uint RIndexBase = 0x1B;
     private const uint RIndexCount = 0x1C;
+    private const uint CrossQueueWaitDrainIntervalDwords = 64;
     private const uint SpiShaderPgmLoPs = 0x8;
     private const uint SpiShaderPgmHiPs = 0x9;
     private const uint SpiShaderPgmLoEs = 0xC8;
@@ -86,6 +87,7 @@ public static partial class AgcExports
     private const uint SpiShaderPgmHiLs = 0x149;
     private const uint SpiShaderPgmLoGs = 0x8A;
     private const uint SpiShaderPgmHiGs = 0x8B;
+    private const uint SpiShaderPgmChecksumGs = 0x80;
     private const uint SpiPsInputEna = 0x1B3;
     private const uint SpiPsInputAddr = 0x1B4;
     private const uint ComputePgmLo = 0x20C;
@@ -185,6 +187,14 @@ public static partial class AgcExports
     private const ulong ShaderNumOutputSemanticsOffset = 0x56;
     private const ulong ShaderTypeOffset = 0x5A;
     private const ulong ShaderNumShRegistersOffset = 0x5C;
+    private const uint ShaderObjectSize = 0x60;
+    private const byte ShaderTypeGeometry = 2;
+    private const byte ShaderTypeHull = 3;
+    private const byte ShaderTypeGeometryFront = 4;
+    private const byte ShaderTypeHullFront = 5;
+    private const byte ShaderTypeGeometryBack = 6;
+    private const byte ShaderTypeHullBack = 7;
+    private const int AgcInvalidShaderHalves = unchecked((int)0x8A6C0008u);
     private const ulong CommandBufferCursorUpOffset = 0x10;
     private const ulong CommandBufferCursorDownOffset = 0x18;
     private const ulong CommandBufferCallbackOffset = 0x20;
@@ -292,6 +302,8 @@ public static partial class AgcExports
     private static readonly HashSet<uint> _gpuDetileGateDiag = new();
     private static long _dcbWriteDataTraceCount;
     private static int _tracedVertexRangeCount;
+    private static int _tracedIndexTypeCount;
+    private static int _tracedPromotedIndexCount;
     private static long _dcbWaitRegMemTraceCount;
     private static long _createShaderTraceCount;
     private static long _packetPayloadTraceCount;
@@ -600,6 +612,9 @@ public static partial class AgcExports
         public uint DefaultOwner { get; set; } = DefaultAgcOwner;
         public uint NextOwner { get; set; } = 1;
         public uint NextResource { get; set; } = 1;
+        public ulong TfRingAddress { get; set; }
+        public uint HsOffchipRing { get; set; }
+        public uint HsOffchipParam { get; set; }
         public ulong WorkSequence { get; set; }
         public ulong SubmissionSequence { get; set; }
         public bool WaitMonitorRunning { get; set; }
@@ -763,6 +778,146 @@ public static partial class AgcExports
         ctx[CpuRegister.Rax] = 0;
         return (int)OrbisGen2Result.ORBIS_GEN2_OK;
     }
+
+    // Names are descriptive until the corresponding public SDK declarations are known.
+    // The NIDs and ABI are confirmed by shipped Gen5 binaries and Kyty's implementation.
+    #pragma warning disable SHEM004
+    [SysAbiExport(
+        Nid = "dolOmWH+huQ",
+        ExportName = "sceAgcGetFusedShaderSize",
+        Target = Generation.Gen5,
+        LibraryName = "libSceAgc")]
+    public static int GetFusedShaderSize(CpuContext ctx)
+    {
+        var destinationAddress = ctx[CpuRegister.Rdi];
+        var frontShaderAddress = ctx[CpuRegister.Rsi];
+        var backShaderAddress = ctx[CpuRegister.Rdx];
+        if (destinationAddress == 0 || frontShaderAddress == 0 || backShaderAddress == 0)
+        {
+            return SetReturn(ctx, OrbisGen2Result.ORBIS_GEN2_ERROR_INVALID_ARGUMENT);
+        }
+
+        if (!TryReadByte(ctx, frontShaderAddress + ShaderTypeOffset, out var frontType) ||
+            !TryReadByte(ctx, backShaderAddress + ShaderTypeOffset, out var backType) ||
+            !TryReadByte(ctx, backShaderAddress + ShaderNumShRegistersOffset, out var registerCount))
+        {
+            return SetReturn(ctx, OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT);
+        }
+
+        if (!IsCompatibleShaderHalfPair(frontType, backType))
+        {
+            return SetRawReturn(ctx, AgcInvalidShaderHalves);
+        }
+
+        if (!ctx.TryWriteUInt64(destinationAddress, (ulong)registerCount * 8) ||
+            !ctx.TryWriteUInt64(destinationAddress + sizeof(ulong), 4))
+        {
+            return SetReturn(ctx, OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT);
+        }
+
+        TraceAgc(
+            $"agc.fused_shader_size out=0x{destinationAddress:X16} front=0x{frontShaderAddress:X16} " +
+            $"back=0x{backShaderAddress:X16} registers={registerCount}");
+        return SetRawReturn(ctx, 0);
+    }
+
+    [SysAbiExport(
+        Nid = "fd5Bp5tGTgo",
+        ExportName = "sceAgcFuseShaderHalves",
+        Target = Generation.Gen5,
+        LibraryName = "libSceAgc")]
+    public static int FuseShaderHalves(CpuContext ctx)
+    {
+        var destinationAddress = ctx[CpuRegister.Rdi];
+        var frontShaderAddress = ctx[CpuRegister.Rsi];
+        var backShaderAddress = ctx[CpuRegister.Rdx];
+        var scratchAddress = ctx[CpuRegister.Rcx];
+        if (destinationAddress == 0 || frontShaderAddress == 0 || backShaderAddress == 0)
+        {
+            return SetReturn(ctx, OrbisGen2Result.ORBIS_GEN2_ERROR_INVALID_ARGUMENT);
+        }
+
+        if (!TryReadByte(ctx, frontShaderAddress + ShaderTypeOffset, out var frontType) ||
+            !TryReadByte(ctx, backShaderAddress + ShaderTypeOffset, out var backType) ||
+            !TryReadByte(ctx, frontShaderAddress + ShaderNumShRegistersOffset, out var frontRegisterCount) ||
+            !TryReadByte(ctx, backShaderAddress + ShaderNumShRegistersOffset, out var backRegisterCount) ||
+            !TryReadUInt64(ctx, frontShaderAddress + ShaderCodeOffset, out var frontCodeAddress) ||
+            !TryReadUInt64(ctx, frontShaderAddress + ShaderShRegistersOffset, out var frontRegistersAddress) ||
+            !TryReadUInt64(ctx, backShaderAddress + ShaderShRegistersOffset, out var backRegistersAddress) ||
+            !TryReadUInt64(ctx, frontShaderAddress + ShaderSpecialsOffset, out var frontSpecialsAddress) ||
+            !TryReadUInt64(ctx, backShaderAddress + ShaderSpecialsOffset, out var backSpecialsAddress))
+        {
+            return SetReturn(ctx, OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT);
+        }
+
+        if (!IsCompatibleShaderHalfPair(frontType, backType))
+        {
+            return SetRawReturn(ctx, AgcInvalidShaderHalves);
+        }
+
+        if (frontSpecialsAddress != 0 && backSpecialsAddress != 0)
+        {
+            var stagesValueOffset = ShaderSpecialVgtShaderStagesEnOffset + sizeof(uint);
+            if (!TryReadUInt32(ctx, frontSpecialsAddress + stagesValueOffset, out var frontStages) ||
+                !TryReadUInt32(ctx, backSpecialsAddress + stagesValueOffset, out var backStages))
+            {
+                return SetReturn(ctx, OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT);
+            }
+
+            var mismatchBit = frontType == ShaderTypeGeometryFront ? 1u << 22 : 1u << 21;
+            if (((frontStages ^ backStages) & mismatchBit) != 0)
+            {
+                return SetRawReturn(ctx, AgcInvalidShaderHalves);
+            }
+        }
+
+        Span<byte> fusedShader = stackalloc byte[(int)ShaderObjectSize];
+        if (!ctx.Memory.TryRead(backShaderAddress, fusedShader))
+        {
+            return SetReturn(ctx, OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT);
+        }
+
+        fusedShader[(int)ShaderTypeOffset] = frontType == ShaderTypeGeometryFront
+            ? ShaderTypeGeometry
+            : ShaderTypeHull;
+        BinaryPrimitives.WriteUInt64LittleEndian(
+            fusedShader[(int)ShaderUserDataOffset..],
+            0);
+
+        var fusedRegistersAddress = backRegistersAddress;
+        if (scratchAddress != 0 && backRegistersAddress != 0 && backRegisterCount != 0)
+        {
+            var registerBytes = (uint)backRegisterCount * 8;
+            if (!TryCopyGuestMemory(ctx, backRegistersAddress, scratchAddress, registerBytes))
+            {
+                return SetReturn(ctx, OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT);
+            }
+
+            fusedRegistersAddress = scratchAddress;
+            BinaryPrimitives.WriteUInt64LittleEndian(
+                fusedShader[(int)ShaderShRegistersOffset..],
+                scratchAddress);
+        }
+
+        if (!ctx.Memory.TryWrite(destinationAddress, fusedShader) ||
+            !TryPatchFusedShaderRegisters(
+                ctx,
+                frontType,
+                frontCodeAddress,
+                frontRegistersAddress,
+                frontRegisterCount,
+                fusedRegistersAddress,
+                backRegisterCount))
+        {
+            return SetReturn(ctx, OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT);
+        }
+
+        TraceAgc(
+            $"agc.fuse_shader_halves out=0x{destinationAddress:X16} front=0x{frontShaderAddress:X16} " +
+            $"back=0x{backShaderAddress:X16} scratch=0x{scratchAddress:X16} type={frontType}->{fusedShader[(int)ShaderTypeOffset]}");
+        return SetRawReturn(ctx, 0);
+    }
+    #pragma warning restore SHEM004
 
     [SysAbiExport(
         Nid = "vcmNN+AAXnY",
@@ -2759,6 +2914,67 @@ public static partial class AgcExports
     }
 
     [SysAbiExport(
+        Nid = "XlNp7jzGiPo",
+        ExportName = "sceAgcDriverSetTFRing",
+        Target = Generation.Gen5,
+        LibraryName = "libSceAgcDriver")]
+    public static int DriverSetTfRing(CpuContext ctx)
+    {
+        var address = ctx[CpuRegister.Rdi];
+        if (address == 0)
+        {
+            return SetReturn(ctx, OrbisGen2Result.ORBIS_GEN2_ERROR_INVALID_ARGUMENT);
+        }
+
+        var gpuState = _submittedGpuStates.GetValue(ctx.Memory, static _ => new SubmittedGpuState());
+        lock (gpuState.Gate)
+        {
+            gpuState.TfRingAddress = address;
+        }
+
+        TraceAgc($"agc.driver_set_tf_ring address=0x{address:X16}");
+        return SetReturn(ctx, OrbisGen2Result.ORBIS_GEN2_OK);
+    }
+
+    internal static ulong GetTfRingAddressForTests(object memory)
+    {
+        var gpuState = _submittedGpuStates.GetValue(memory, static _ => new SubmittedGpuState());
+        lock (gpuState.Gate)
+        {
+            return gpuState.TfRingAddress;
+        }
+    }
+
+    [SysAbiExport(
+        Nid = "MM4IZSEYytQ",
+        ExportName = "sceAgcDriverSetHsOffchipParam",
+        Target = Generation.Gen5,
+        LibraryName = "libSceAgcDriver")]
+    public static int DriverSetHsOffchipParam(CpuContext ctx)
+    {
+        var ring = (uint)ctx[CpuRegister.Rdi];
+        var parameter = (uint)ctx[CpuRegister.Rsi];
+        var gpuState = _submittedGpuStates.GetValue(ctx.Memory, static _ => new SubmittedGpuState());
+        lock (gpuState.Gate)
+        {
+            gpuState.HsOffchipRing = ring;
+            gpuState.HsOffchipParam = parameter;
+        }
+
+        TraceAgc($"agc.driver_set_hs_offchip_param ring={ring} parameter=0x{parameter:X8}");
+        return SetReturn(ctx, OrbisGen2Result.ORBIS_GEN2_OK);
+    }
+
+    internal static (uint Ring, uint Parameter) GetHsOffchipParamForTests(object memory)
+    {
+        var gpuState = _submittedGpuStates.GetValue(memory, static _ => new SubmittedGpuState());
+        lock (gpuState.Gate)
+        {
+            return (gpuState.HsOffchipRing, gpuState.HsOffchipParam);
+        }
+    }
+
+    [SysAbiExport(
         Nid = "UglJIZjGssM",
         ExportName = "sceAgcDriverSubmitDcb",
         Target = Generation.Gen5,
@@ -3130,6 +3346,7 @@ public static partial class AgcExports
         bool tracePackets)
     {
         var offset = 0u;
+        var nextCrossQueueWaitDrainOffset = CrossQueueWaitDrainIntervalDwords;
         while (offset < dwordCount)
         {
             var currentAddress = commandAddress + ((ulong)offset * sizeof(uint));
@@ -3362,6 +3579,13 @@ public static partial class AgcExports
                 TryReadUInt32(ctx, currentAddress + 4, out var indexSize))
             {
                 state.IndexSize = indexSize & 0x3;
+                if (_traceAgcShader &&
+                    Interlocked.Increment(ref _tracedIndexTypeCount) <= 64)
+                {
+                    TraceAgcShader(
+                        $"agc.index_type raw=0x{indexSize:X8} " +
+                        $"decoded={state.IndexSize} packet=0x{currentAddress:X16}");
+                }
             }
 
             if (op == ItNumInstances &&
@@ -3633,6 +3857,28 @@ public static partial class AgcExports
             }
 
             offset += length;
+            if (offset >= nextCrossQueueWaitDrainOffset)
+            {
+                // DriverSubmitDcb/Acb serializes parser state under gpuState.Gate.
+                // Without a safe-point, a completed label cannot resume a
+                // different logical queue until this entire (often very large)
+                // command buffer finishes or suspends. Re-enter only queues
+                // whose real WAIT_REG_MEM condition is already satisfied; the
+                // current parser state is explicitly excluded below.
+                if (GpuWaitRegistry.Count != 0)
+                {
+                    DrainResumableDcbs(
+                        ctx,
+                        gpuState,
+                        tracePackets,
+                        excludedState: state);
+                }
+
+                nextCrossQueueWaitDrainOffset = offset >
+                    uint.MaxValue - CrossQueueWaitDrainIntervalDwords
+                        ? uint.MaxValue
+                        : offset + CrossQueueWaitDrainIntervalDwords;
+            }
         }
 
         return false;
@@ -5177,7 +5423,8 @@ public static partial class AgcExports
     private static int DrainResumableDcbs(
         CpuContext ctx,
         SubmittedGpuState gpuState,
-        bool tracePackets)
+        bool tracePackets,
+        SubmittedDcbState? excludedState = null)
     {
         if (!_gpuWaitSuspendEnabled)
         {
@@ -5187,10 +5434,13 @@ public static partial class AgcExports
         var resumedCount = 0;
         for (var pass = 0; pass < 256; pass++)
         {
-            var woken = GpuWaitRegistry.CollectSatisfied(ctx.Memory, (address, is64Bit) =>
-                is64Bit
-                    ? TryReadUInt64(ctx, address, out var value64) ? value64 : (ulong?)null
-                    : TryReadUInt32(ctx, address, out var value32) ? value32 : (ulong?)null);
+            var woken = GpuWaitRegistry.CollectSatisfied(
+                ctx.Memory,
+                (address, is64Bit) =>
+                    is64Bit
+                        ? TryReadUInt64(ctx, address, out var value64) ? value64 : (ulong?)null
+                        : TryReadUInt32(ctx, address, out var value32) ? value32 : (ulong?)null,
+                excludedState);
 
             // Indirect-dispatch dimension retries whose deadline elapsed are
             // resumed so they drop instead of stalling. Flag each so its immediate
@@ -6086,6 +6336,12 @@ public static partial class AgcExports
     {
         draw = default!;
         error = string.Empty;
+        state.UcRegisters.TryGetValue(VgtPrimitiveType, out var primitiveType);
+        var is32BitIndex = indexed && ResolveGuestIndexIs32Bit(
+            ctx,
+            state,
+            vertexCount,
+            primitiveType);
         ulong exportShaderHeader;
         lock (_submitTraceGate)
         {
@@ -6112,6 +6368,7 @@ public static partial class AgcExports
                     state,
                     vertexCount,
                     indexed,
+                    is32BitIndex,
                     out var depthVertexRecords)
                         ? depthVertexRecords
                         : null))
@@ -6205,7 +6462,6 @@ public static partial class AgcExports
 
         IReadOnlyList<Gen5VertexInputBinding> vertexInputs =
             exportEvaluation.VertexInputs ?? [];
-        state.UcRegisters.TryGetValue(VgtPrimitiveType, out var primitiveType);
         var syntheticTarget = new RenderTargetDescriptor(
             Slot: 0,
             Address: 0,
@@ -6260,7 +6516,9 @@ public static partial class AgcExports
             AttributeCount: 0,
             vertexCount,
             state.InstanceCount,
-            indexed ? CreateGuestIndexBuffer(ctx, state, vertexCount) : null,
+            indexed
+                ? CreateGuestIndexBuffer(ctx, state, vertexCount, is32BitIndex)
+                : null,
             textures,
             exportEvaluation.GlobalMemoryBindings,
             vertexInputs,
@@ -6290,6 +6548,12 @@ public static partial class AgcExports
     {
         draw = default!;
         error = string.Empty;
+        state.UcRegisters.TryGetValue(VgtPrimitiveType, out var primitiveType);
+        var is32BitIndex = indexed && ResolveGuestIndexIs32Bit(
+            ctx,
+            state,
+            vertexCount,
+            primitiveType);
         ulong exportShaderHeader;
         ulong pixelShaderHeader;
         lock (_submitTraceGate)
@@ -6325,6 +6589,7 @@ public static partial class AgcExports
                     state,
                     vertexCount,
                     indexed,
+                    is32BitIndex,
                     out var vertexRecords)
                         ? vertexRecords
                         : null))
@@ -6707,7 +6972,6 @@ public static partial class AgcExports
             vertexInputs = exportEvaluation.VertexInputs ?? [];
         }
 
-        state.UcRegisters.TryGetValue(VgtPrimitiveType, out var primitiveType);
         var guestTargets = new GuestRenderTarget[renderTargets.Length];
         for (var index = 0; index < renderTargets.Length; index++)
         {
@@ -6735,7 +6999,9 @@ public static partial class AgcExports
             GetInterpolatedAttributeCount(pixelState),
             vertexCount,
             state.InstanceCount,
-            indexed ? CreateGuestIndexBuffer(ctx, state, vertexCount) : null,
+            indexed
+                ? CreateGuestIndexBuffer(ctx, state, vertexCount, is32BitIndex)
+                : null,
             textures,
             globalMemoryBindings,
             vertexInputs,
@@ -7046,17 +7312,72 @@ public static partial class AgcExports
             ColorFunc: 0,
         };
 
+    private static bool ResolveGuestIndexIs32Bit(
+        CpuContext ctx,
+        SubmittedDcbState state,
+        uint indexCount,
+        uint primitiveType)
+    {
+        if (state.IndexSize != 0)
+        {
+            return true;
+        }
+
+        if (primitiveType != GuestIndexFormatResolver.TriangleListPrimitive ||
+            indexCount != 6 ||
+            state.IndexBufferAddress == 0 ||
+            (state.IndexBufferAddress & 3) != 0)
+        {
+            return false;
+        }
+
+        Span<byte> declared16BitData = stackalloc byte[6 * sizeof(ushort)];
+        Span<byte> candidate32BitData = stackalloc byte[6 * sizeof(uint)];
+        var declaredAddress = state.IndexBufferAddress +
+            checked((ulong)state.DrawIndexOffset * sizeof(ushort));
+        var candidateAddress = state.IndexBufferAddress +
+            checked((ulong)state.DrawIndexOffset * sizeof(uint));
+        if ((!ctx.Memory.TryRead(declaredAddress, declared16BitData) &&
+             !KernelMemoryCompatExports.TryReadTrackedLibcHeap(
+                 declaredAddress,
+                 declared16BitData)) ||
+            (!ctx.Memory.TryRead(candidateAddress, candidate32BitData) &&
+             !KernelMemoryCompatExports.TryReadTrackedLibcHeap(
+                 candidateAddress,
+                 candidate32BitData)) ||
+            !GuestIndexFormatResolver.ShouldPromoteQuadTo32Bit(
+                primitiveType,
+                indexCount,
+                declared16BitData,
+                candidate32BitData))
+        {
+            return false;
+        }
+
+        if (_traceAgcShader &&
+            Interlocked.Increment(ref _tracedPromotedIndexCount) <= 64)
+        {
+            TraceAgcShader(
+                $"agc.index_format_promoted addr=0x{state.IndexBufferAddress:X16} " +
+                $"offset={state.DrawIndexOffset} count={indexCount} " +
+                $"primitive=0x{primitiveType:X} declared={state.IndexSize} " +
+                $"indices={Convert.ToHexString(candidate32BitData)}");
+        }
+
+        return true;
+    }
+
     private static GuestIndexBuffer? CreateGuestIndexBuffer(
         CpuContext ctx,
         SubmittedDcbState state,
-        uint indexCount)
+        uint indexCount,
+        bool is32Bit)
     {
         if (state.IndexBufferAddress == 0 || indexCount == 0)
         {
             return null;
         }
 
-        var is32Bit = state.IndexSize != 0;
         var bytesPerIndex = is32Bit ? sizeof(uint) : sizeof(ushort);
         var byteOffset = checked((ulong)state.DrawIndexOffset * (uint)bytesPerIndex);
         var byteCount = checked((int)(indexCount * (uint)bytesPerIndex));
@@ -7078,6 +7399,7 @@ public static partial class AgcExports
         SubmittedDcbState state,
         uint drawCount,
         bool indexed,
+        bool is32Bit,
         out uint recordCount)
     {
         recordCount = Math.Max(drawCount, Math.Max(state.InstanceCount, 1u));
@@ -7091,7 +7413,6 @@ public static partial class AgcExports
             return false;
         }
 
-        var is32Bit = state.IndexSize != 0;
         var bytesPerIndex = is32Bit ? sizeof(uint) : sizeof(ushort);
         var byteOffset = checked((ulong)state.DrawIndexOffset * (uint)bytesPerIndex);
         var address = state.IndexBufferAddress + byteOffset;
@@ -9697,6 +10018,8 @@ public static partial class AgcExports
 
         var writesGlobalMemory = evaluation.GlobalMemoryBindings.Any(static binding =>
             binding.Writable);
+        var usesGds = shaderState.Program.Instructions.Any(static instruction =>
+            instruction.Control is Gen5DataShareControl { Gds: true });
         var gpuDispatch = false;
         var evaluationHandledByCpu = false;
         var computeError = string.Empty;
@@ -9728,7 +10051,8 @@ public static partial class AgcExports
                 }
             }
         }
-        else if (!hasStorageBinding &&
+        else if (!usesGds &&
+            !hasStorageBinding &&
             writesGlobalMemory &&
             TrySubmitMaskedDwordCopyKernel(
                 ctx,
@@ -9762,8 +10086,13 @@ public static partial class AgcExports
                     $"semantic-global-write-sync-timeout sequence={semanticCopySequence}";
             }
         }
-        else if ((hasStorageBinding || writesGlobalMemory) &&
-            (ulong)localSizeX * localSizeY * localSizeZ <= 1024)
+        else if (ShouldTranslateComputeProgram(
+            usesGds,
+            hasStorageBinding,
+            writesGlobalMemory,
+            localSizeX,
+            localSizeY,
+            localSizeZ))
         {
             var shaderKey = (
                 shaderAddress,
@@ -9903,6 +10232,16 @@ public static partial class AgcExports
             ReturnPooledEvaluationArrays(evaluation);
         }
     }
+
+    internal static bool ShouldTranslateComputeProgram(
+        bool usesGds,
+        bool hasStorageBinding,
+        bool writesGlobalMemory,
+        uint localSizeX,
+        uint localSizeY,
+        uint localSizeZ) =>
+        (usesGds || hasStorageBinding || writesGlobalMemory) &&
+        (ulong)localSizeX * localSizeY * localSizeZ <= 1024;
 
     /// <summary>
     /// Recognizes the SDK's masked-dword resource initialization kernel and
@@ -11271,6 +11610,130 @@ public static partial class AgcExports
     private static bool IsEsGeometryShaderType(byte shaderType) =>
         shaderType is 2 or 6;
 
+    private static bool IsCompatibleShaderHalfPair(byte frontType, byte backType) =>
+        (frontType == ShaderTypeGeometryFront && backType == ShaderTypeGeometryBack) ||
+        (frontType == ShaderTypeHullFront && backType == ShaderTypeHullBack);
+
+    private static bool TryPatchFusedShaderRegisters(
+        CpuContext ctx,
+        byte frontType,
+        ulong frontCodeAddress,
+        ulong frontRegistersAddress,
+        byte frontRegisterCount,
+        ulong fusedRegistersAddress,
+        byte fusedRegisterCount)
+    {
+        if (frontType == ShaderTypeGeometryFront)
+        {
+            for (uint occurrence = 0; occurrence < 2; occurrence++)
+            {
+                if (!TryFindShaderRegister(
+                        ctx,
+                        fusedRegistersAddress,
+                        fusedRegisterCount,
+                        SpiShaderPgmChecksumGs,
+                        occurrence,
+                        out var destinationRegister) ||
+                    !TryFindShaderRegister(
+                        ctx,
+                        frontRegistersAddress,
+                        frontRegisterCount,
+                        SpiShaderPgmChecksumGs,
+                        occurrence,
+                        out var sourceRegister))
+                {
+                    return false;
+                }
+
+                if (destinationRegister != 0 && sourceRegister != 0)
+                {
+                    if (!TryReadUInt32(ctx, sourceRegister + sizeof(uint), out var checksum) ||
+                        !TryWriteUInt32(ctx, destinationRegister + sizeof(uint), checksum))
+                    {
+                        return false;
+                    }
+                }
+            }
+        }
+
+        var programLoRegister = frontType == ShaderTypeGeometryFront
+            ? SpiShaderPgmLoEs
+            : SpiShaderPgmLoLs;
+        if (!TryFindShaderRegister(
+                ctx,
+                fusedRegistersAddress,
+                fusedRegisterCount,
+                programLoRegister,
+                occurrence: 0,
+                out var programLoAddress))
+        {
+            return false;
+        }
+
+        if (programLoAddress == 0)
+        {
+            return true;
+        }
+
+        if (!TryReadUInt32(ctx, programLoAddress + 8, out var programHiRegister) ||
+            !TryReadUInt32(ctx, programLoAddress + 12, out var programHiValue))
+        {
+            return false;
+        }
+
+        // Kyty treats a missing adjacent HI register as a non-fatal patch miss here.
+        if (programHiRegister != programLoRegister + 1)
+        {
+            return true;
+        }
+
+        var programLoValue = (uint)((frontCodeAddress >> 8) & uint.MaxValue);
+        var patchedProgramHiValue =
+            (programHiValue & 0xFFFF_FF00u) |
+            (uint)((frontCodeAddress >> 40) & 0xFF);
+        return TryWriteUInt32(ctx, programLoAddress + sizeof(uint), programLoValue) &&
+               TryWriteUInt32(ctx, programLoAddress + 12, patchedProgramHiValue);
+    }
+
+    private static bool TryFindShaderRegister(
+        CpuContext ctx,
+        ulong registersAddress,
+        byte registerCount,
+        uint targetOffset,
+        uint occurrence,
+        out ulong registerAddress)
+    {
+        registerAddress = 0;
+        if (registersAddress == 0 || registerCount == 0)
+        {
+            return true;
+        }
+
+        for (uint index = 0; index < registerCount; index++)
+        {
+            var candidateAddress = registersAddress + (index * 8);
+            if (!TryReadUInt32(ctx, candidateAddress, out var candidateOffset))
+            {
+                return false;
+            }
+
+            if (candidateOffset != targetOffset)
+            {
+                continue;
+            }
+
+            if (occurrence == 0)
+            {
+                registerAddress = candidateAddress;
+                return true;
+            }
+
+            occurrence--;
+        }
+
+        return true;
+    }
+
     private static int SetIndirectPatchAddress(CpuContext ctx, string registerSpace)
     {
         var commandAddress = ctx[CpuRegister.Rdi];
@@ -11680,6 +12143,12 @@ public static partial class AgcExports
     {
         ctx[CpuRegister.Rax] = unchecked((ulong)(int)result);
         return (int)result;
+    }
+
+    private static int SetRawReturn(CpuContext ctx, int result)
+    {
+        ctx[CpuRegister.Rax] = unchecked((ulong)(long)result);
+        return result;
     }
 
     private static uint Pm4(uint lengthDwords, uint op, uint register) =>
@@ -12522,34 +12991,4 @@ public static partial class AgcExports
         return ctx.SetReturn(OrbisGen2Result.ORBIS_GEN2_OK);
     }
 
-    // Tessellation-factor ring and hull-shader off-chip buffers are guest-driver
-    // configuration for on-hardware tessellation memory. Our translator handles
-    // shader execution directly, so there is no guest-side ring to program: the
-    // guest driver only needs these to report success so init proceeds. Games
-    // (e.g. Unity titles) call them during GPU setup and stall if unresolved.
-    [SysAbiExport(
-        Nid = "XlNp7jzGiPo",
-        ExportName = "sceAgcDriverSetTFRing",
-        Target = Generation.Gen5,
-        LibraryName = "libSceAgcDriver")]
-    public static int DriverSetTFRing(CpuContext ctx)
-    {
-        TraceAgc(
-            $"agc.driver_set_tf_ring ring=0x{ctx[CpuRegister.Rdi]:X16} " +
-            $"size=0x{(uint)ctx[CpuRegister.Rsi]:X8}");
-        return ctx.SetReturn(OrbisGen2Result.ORBIS_GEN2_OK);
-    }
-
-    [SysAbiExport(
-        Nid = "MM4IZSEYytQ",
-        ExportName = "sceAgcDriverSetHsOffchipParam",
-        Target = Generation.Gen5,
-        LibraryName = "libSceAgcDriver")]
-    public static int DriverSetHsOffchipParam(CpuContext ctx)
-    {
-        TraceAgc(
-            $"agc.driver_set_hs_offchip_param buffer=0x{ctx[CpuRegister.Rdi]:X16} " +
-            $"param=0x{(uint)ctx[CpuRegister.Rsi]:X8}");
-        return ctx.SetReturn(OrbisGen2Result.ORBIS_GEN2_OK);
-    }
 }

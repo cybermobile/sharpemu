@@ -368,6 +368,34 @@ public static class PadExports
         return ctx.SetReturn((int)OrbisGen2Result.ORBIS_GEN2_OK);
     }
 
+    [SysAbiExport(
+        Nid = "znaWI0gpuo8",
+        ExportName = "scePadGetTriggerEffectState",
+        Target = Generation.Gen4 | Generation.Gen5,
+        LibraryName = "libScePad")]
+    public static int PadGetTriggerEffectState(CpuContext ctx)
+    {
+        var handle = unchecked((int)ctx[CpuRegister.Rdi]);
+        var stateAddress = ctx[CpuRegister.Rsi];
+        if (!IsPrimaryPadHandle(handle))
+        {
+            return ctx.SetReturn(OrbisPadErrorInvalidHandle);
+        }
+
+        if (stateAddress == 0)
+        {
+            return ctx.SetReturn((int)OrbisGen2Result.ORBIS_GEN2_ERROR_INVALID_ARGUMENT);
+        }
+
+        // Host input exposes trigger pressure but not adaptive-resistance
+        // feedback state, so report both DualSense trigger engines as idle.
+        Span<byte> state = stackalloc byte[2 * sizeof(int)];
+        state.Clear();
+        return ctx.Memory.TryWrite(stateAddress, state)
+            ? ctx.SetReturn(0)
+            : ctx.SetReturn((int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT);
+    }
+
     private static byte DecodeTriggerVibration(ReadOnlySpan<byte> command)
     {
         var mode = BinaryPrimitives.ReadUInt32LittleEndian(command);

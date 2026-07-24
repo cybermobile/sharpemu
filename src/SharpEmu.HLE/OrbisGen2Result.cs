@@ -1,5 +1,6 @@
-// Copyright (C) 2026 SharpEmu Emulator Project
-// SPDX-License-Identifier: GPL-2.0-or-later
+// SPDX-FileCopyrightText: 2021 InoriRus
+// SPDX-FileCopyrightText: 2026 SharpEmu Emulator Project
+// SPDX-License-Identifier: GPL-2.0-or-later AND MIT
 
 namespace SharpEmu.HLE;
 
@@ -26,9 +27,14 @@ public enum OrbisGen2Result : int
     ORBIS_GEN2_ERROR_NOT_FOUND = unchecked((int)0x80020002),
 
     /// <summary>
+    /// Indicates that a kernel object handle does not identify a live object.
+    /// </summary>
+    ORBIS_GEN2_ERROR_NO_SUCH_PROCESS = unchecked((int)0x80020003),
+
+    /// <summary>
     /// Indicates that one or more arguments were invalid.
     /// </summary>
-    ORBIS_GEN2_ERROR_INVALID_ARGUMENT = unchecked((int)0x80020003),
+    ORBIS_GEN2_ERROR_INVALID_ARGUMENT = unchecked((int)0x80020016),
 
     /// <summary>
     /// Indicates that an item already exists.
@@ -36,9 +42,19 @@ public enum OrbisGen2Result : int
     ORBIS_GEN2_ERROR_ALREADY_EXISTS = unchecked((int)0x80020004),
 
     /// <summary>
+    /// Indicates that an event-queue descriptor is invalid.
+    /// </summary>
+    ORBIS_GEN2_ERROR_BAD_FILE_DESCRIPTOR = unchecked((int)0x80020009),
+
+    /// <summary>
     /// Indicates that completing the operation would deadlock.
     /// </summary>
     ORBIS_GEN2_ERROR_DEADLOCK = unchecked((int)0x8002000B),
+
+    /// <summary>
+    /// Indicates that the requested address or resource cannot be accessed.
+    /// </summary>
+    ORBIS_GEN2_ERROR_ACCESS_DENIED = unchecked((int)0x8002000D),
 
     /// <summary>
     /// Indicates that the waited-on object was deleted while the caller was
@@ -46,6 +62,11 @@ public enum OrbisGen2Result : int
     /// deleted semaphore observe.
     /// </summary>
     ORBIS_GEN2_ERROR_DELETED = unchecked((int)0x8002000D),
+
+    /// <summary>
+    /// Indicates that a guest pointer could not be accessed.
+    /// </summary>
+    ORBIS_GEN2_ERROR_FAULT = unchecked((int)0x8002000E),
 
     /// <summary>
     /// Indicates that the target resource is busy.

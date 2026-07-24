@@ -39,6 +39,18 @@ public sealed class KernelEventQueueCompatExportsTests
     }
 
     [Fact]
+    public void CreateEqueue_NullNameAddressReturnsInvalidArgument()
+    {
+        var (context, outAddress) = NewContextWithOutSlot();
+        context[CpuRegister.Rdi] = outAddress;
+        context[CpuRegister.Rsi] = 0;
+
+        var result = KernelEventQueueCompatExports.KernelCreateEqueue(context);
+
+        Assert.Equal((int)OrbisGen2Result.ORBIS_GEN2_ERROR_INVALID_ARGUMENT, result);
+    }
+
+    [Fact]
     public void DeleteEqueue_RemovesQueueFromRegistry()
     {
         var (context, outAddress) = NewContextWithOutSlot();
@@ -54,7 +66,7 @@ public sealed class KernelEventQueueCompatExportsTests
     }
 
     [Fact]
-    public void AddUserEvent_OnUnknownQueueReturnsNotFound()
+    public void AddUserEvent_OnUnknownQueueReturnsBadFileDescriptor()
     {
         var (context, _) = NewContextWithOutSlot();
         const ulong unknownHandle = 0xDEAD_BEEF;
@@ -63,7 +75,7 @@ public sealed class KernelEventQueueCompatExportsTests
 
         var result = KernelEventQueueCompatExports.KernelAddUserEvent(context);
 
-        Assert.Equal((int)OrbisGen2Result.ORBIS_GEN2_ERROR_NOT_FOUND, result);
+        Assert.Equal((int)OrbisGen2Result.ORBIS_GEN2_ERROR_BAD_FILE_DESCRIPTOR, result);
     }
 
     [Fact]
@@ -80,7 +92,7 @@ public sealed class KernelEventQueueCompatExportsTests
     }
 
     [Fact]
-    public void TriggerUserEvent_OnUnknownQueueReturnsNotFound()
+    public void TriggerUserEvent_OnUnknownQueueReturnsBadFileDescriptor()
     {
         var (context, _) = NewContextWithOutSlot();
         context[CpuRegister.Rdi] = 0xDEAD_BEEF;
@@ -89,7 +101,7 @@ public sealed class KernelEventQueueCompatExportsTests
 
         var result = KernelEventQueueCompatExports.KernelTriggerUserEvent(context);
 
-        Assert.Equal((int)OrbisGen2Result.ORBIS_GEN2_ERROR_NOT_FOUND, result);
+        Assert.Equal((int)OrbisGen2Result.ORBIS_GEN2_ERROR_BAD_FILE_DESCRIPTOR, result);
     }
 
     [Fact]
@@ -164,7 +176,10 @@ public sealed class KernelEventQueueCompatExportsTests
         var memory = new FakeCpuMemory(MemoryBase, MemorySize);
         var context = new CpuContext(memory, Generation.Gen5);
         const ulong outAddress = MemoryBase + 0x10;
+        const ulong nameAddress = MemoryBase + 0x40;
+        memory.WriteCString(nameAddress, "event-queue-test");
         context[CpuRegister.Rdi] = outAddress;
+        context[CpuRegister.Rsi] = nameAddress;
         Assert.Equal((int)OrbisGen2Result.ORBIS_GEN2_OK,
             KernelEventQueueCompatExports.KernelCreateEqueue(context));
         Assert.True(context.TryReadUInt64(outAddress, out var handle));
@@ -175,6 +190,9 @@ public sealed class KernelEventQueueCompatExportsTests
     {
         var memory = new FakeCpuMemory(MemoryBase, MemorySize);
         var context = new CpuContext(memory, Generation.Gen5);
+        const ulong nameAddress = MemoryBase + 0x40;
+        memory.WriteCString(nameAddress, "event-queue-test");
+        context[CpuRegister.Rsi] = nameAddress;
         return (context, MemoryBase + 0x10);
     }
 }

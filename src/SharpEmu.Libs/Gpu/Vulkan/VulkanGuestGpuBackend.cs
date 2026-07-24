@@ -48,7 +48,7 @@ internal sealed class VulkanGuestGpuBackend : IGuestGpuBackend
             return false;
         }
 
-        shader = new VulkanCompiledGuestShader(compiled.Spirv);
+        shader = new VulkanCompiledGuestShader(compiled.Spirv, compiled.UsesGds);
         return true;
     }
 
@@ -84,7 +84,7 @@ internal sealed class VulkanGuestGpuBackend : IGuestGpuBackend
             return false;
         }
 
-        shader = new VulkanCompiledGuestShader(compiled.Spirv);
+        shader = new VulkanCompiledGuestShader(compiled.Spirv, compiled.UsesGds);
         return true;
     }
 
@@ -118,7 +118,7 @@ internal sealed class VulkanGuestGpuBackend : IGuestGpuBackend
             return false;
         }
 
-        shader = new VulkanCompiledGuestShader(compiled.Spirv);
+        shader = new VulkanCompiledGuestShader(compiled.Spirv, compiled.UsesGds);
         return true;
     }
 
@@ -280,7 +280,17 @@ internal sealed class VulkanGuestGpuBackend : IGuestGpuBackend
             writesGlobalMemory,
             threadCountX,
             threadCountY,
-            threadCountZ);
+            threadCountZ,
+            UsesGds(computeShader));
+
+    public long SubmitGdsClear(uint offsetDwords, uint countDwords, uint value) =>
+        VulkanVideoPresenter.SubmitGdsClear(offsetDwords, countDwords, value);
+
+    public long SubmitGdsRead(
+        uint offsetDwords,
+        uint countDwords,
+        Action<ReadOnlyMemory<uint>> completion) =>
+        VulkanVideoPresenter.SubmitGdsRead(offsetDwords, countDwords, completion);
 
     public bool TrySubmitGuestImage(
         ulong address,
@@ -404,4 +414,8 @@ internal sealed class VulkanGuestGpuBackend : IGuestGpuBackend
             ? vulkanShader.Spirv
             : throw new InvalidOperationException(
                 $"shader handle of type {shader.GetType().Name} was not compiled by the Vulkan backend");
+
+    private static bool UsesGds(IGuestCompiledShader shader) =>
+        shader is VulkanCompiledGuestShader { UsesGds: true };
+
 }

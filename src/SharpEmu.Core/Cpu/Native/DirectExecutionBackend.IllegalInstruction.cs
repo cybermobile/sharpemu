@@ -23,6 +23,7 @@ public sealed partial class DirectExecutionBackend
     // Windows x64 CONTEXT.EFlags lives just past the segment selectors. The GPR offsets it shares
     // with the rest of the backend are the CTX_* constants declared in DirectExecutionBackend.cs.
     private const int CTX_EFLAGS = 68;
+    private const int CTX_XMM0 = 0x1A0;
 
     // STATUS_ILLEGAL_INSTRUCTION (#UD surfaced by the Windows vectored handler).
     private const uint StatusIllegalInstruction = 0xC000001Du;
@@ -34,12 +35,26 @@ public sealed partial class DirectExecutionBackend
 
     private static int _bmiSoftwareFallbackAnnounced;
     private static long _bmiInstructionsEmulated;
+    private static int _sha1SoftwareFallbackAnnounced;
+    private static long _sha1InstructionsEmulated;
+    private static int _sha1TransformFastPathAnnounced;
+    private static long _sha1BlocksCompressed;
 
     private unsafe bool TryRecoverIllegalInstruction(void* contextRecord, ulong rip)
     {
+        if (TryRecoverSha1TransformLoop(contextRecord, rip))
+        {
+            return true;
+        }
+
         if (!TryReadFaultingInstruction(rip, out var instruction))
         {
             return false;
+        }
+
+        if (TryRecoverSha1Instruction(contextRecord, rip, in instruction))
+        {
+            return true;
         }
 
         if (instruction.Op0Kind != OpKind.Register ||
@@ -70,6 +85,238 @@ public sealed partial class DirectExecutionBackend
         }
 
         return true;
+    }
+
+    private unsafe bool TryRecoverSha1TransformLoop(void* contextRecord, ulong rip)
+    {
+        var entry = new byte[Sha1TransformLoopFastPath.EntrySignatureLength];
+        var loopExit = new byte[Sha1TransformLoopFastPath.ExitSignatureLength];
+        if (!TryReadHostBytes(rip, entry) ||
+            !TryReadHostBytes(rip + Sha1TransformLoopFastPath.LoopExitSignatureDelta, loopExit) ||
+            !Sha1TransformLoopFastPath.Matches(entry, loopExit))
+        {
+            return false;
+        }
+
+        var inputAddress = ReadCtxU64(contextRecord, CTX_RBX);
+        var nextInputAddress = ReadCtxU64(contextRecord, CTX_RSI);
+        var remainingLength = ReadCtxU64(contextRecord, CTX_RDX);
+        var loopRemainingLength = ReadCtxU64(contextRecord, CTX_RCX);
+        var stateAddress = ReadCtxU64(contextRecord, CTX_R14);
+        if (remainingLength < Sha1BlockCompressor.BlockSize ||
+            remainingLength > int.MaxValue ||
+            inputAddress > ulong.MaxValue - (ulong)Sha1BlockCompressor.BlockSize ||
+            nextInputAddress != inputAddress + Sha1BlockCompressor.BlockSize ||
+            loopRemainingLength != remainingLength - Sha1BlockCompressor.BlockSize)
+        {
+            return false;
+        }
+
+        var completeLength = remainingLength & ~(ulong)(Sha1BlockCompressor.BlockSize - 1);
+        if (!IsHostRangeAccessible(inputAddress, completeLength, requireWrite: false) ||
+            !IsHostRangeAccessible(stateAddress, 5 * sizeof(uint), requireWrite: true))
+        {
+            return false;
+        }
+
+        Span<uint> state = stackalloc uint[5];
+        var stateBytes = new Span<byte>((void*)stateAddress, 5 * sizeof(uint));
+        for (var index = 0; index < state.Length; index++)
+        {
+            state[index] = BinaryPrimitives.ReadUInt32LittleEndian(stateBytes.Slice(index * sizeof(uint), sizeof(uint)));
+        }
+
+        Sha1BlockCompressor.CompressBlocks(
+            state,
+            new ReadOnlySpan<byte>((void*)inputAddress, checked((int)completeLength)));
+
+        for (var index = 0; index < state.Length; index++)
+        {
+            BinaryPrimitives.WriteUInt32LittleEndian(
+                stateBytes.Slice(index * sizeof(uint), sizeof(uint)),
+                state[index]);
+        }
+
+        WriteCtxU64(contextRecord, CTX_RBX, inputAddress + completeLength);
+        WriteCtxU64(contextRecord, CTX_RDX, remainingLength - completeLength);
+        WriteCtxU64(contextRecord, CTX_RIP, rip + Sha1TransformLoopFastPath.ResumeDelta);
+        Interlocked.Add(ref _sha1BlocksCompressed, checked((long)(completeLength / Sha1BlockCompressor.BlockSize)));
+        MarkExecutionProgress();
+
+        if (Interlocked.Exchange(ref _sha1TransformFastPathAnnounced, 1) == 0)
+        {
+            Console.Error.WriteLine(
+                "[LOADER][INFO] Replaced a guest Intel SHA transform loop with block-level software compression.");
+        }
+
+        return true;
+    }
+
+    private unsafe static bool IsHostRangeAccessible(ulong address, ulong length, bool requireWrite)
+    {
+        if (address < 0x10000 || length == 0 || address > ulong.MaxValue - length)
+        {
+            return false;
+        }
+
+        var end = address + length;
+        var cursor = address;
+        while (cursor < end)
+        {
+            if (VirtualQuery((void*)cursor, out var region, (nuint)sizeof(MEMORY_BASIC_INFORMATION64)) == 0 ||
+                region.State != MEM_COMMIT ||
+                !IsReadableProtection(region.Protect) ||
+                (requireWrite && !IsWritableProtection(region.Protect)))
+            {
+                return false;
+            }
+
+            var regionEnd = region.BaseAddress + region.RegionSize;
+            if (regionEnd <= cursor)
+            {
+                return false;
+            }
+            cursor = Math.Min(end, regionEnd);
+        }
+
+        return true;
+    }
+
+    private static bool IsWritableProtection(uint protection)
+    {
+        var baseProtection = protection & 0xFF;
+        return baseProtection is PAGE_READWRITE or 0x08 or 0x40 or 0x80;
+    }
+
+    private unsafe bool TryRecoverSha1Instruction(
+        void* contextRecord,
+        ulong rip,
+        in Instruction instruction)
+    {
+        if (instruction.Mnemonic is not (
+                Mnemonic.Sha1msg1 or
+                Mnemonic.Sha1msg2 or
+                Mnemonic.Sha1nexte or
+                Mnemonic.Sha1rnds4) ||
+            instruction.Op0Kind != OpKind.Register ||
+            !TryGetXmmIndex(instruction.Op0Register, out var destinationIndex))
+        {
+            return false;
+        }
+
+        Span<uint> source1 = stackalloc uint[4];
+        Span<uint> source2 = stackalloc uint[4];
+        Span<uint> destination = stackalloc uint[4];
+        ReadContextXmm(contextRecord, destinationIndex, source1);
+        if (!TryReadXmmOperand(contextRecord, in instruction, operandIndex: 1, source2))
+        {
+            return false;
+        }
+
+        switch (instruction.Mnemonic)
+        {
+            case Mnemonic.Sha1msg1:
+                Sha1InstructionEmulator.Message1(source1, source2, destination);
+                break;
+            case Mnemonic.Sha1msg2:
+                Sha1InstructionEmulator.Message2(source1, source2, destination);
+                break;
+            case Mnemonic.Sha1nexte:
+                Sha1InstructionEmulator.NextE(source1, source2, destination);
+                break;
+            case Mnemonic.Sha1rnds4:
+                Sha1InstructionEmulator.Rounds4(source1, source2, instruction.Immediate8, destination);
+                break;
+            default:
+                return false;
+        }
+
+        WriteContextXmm(contextRecord, destinationIndex, destination);
+        WriteCtxU64(contextRecord, CTX_RIP, rip + (ulong)instruction.Length);
+        var emulatedCount = Interlocked.Increment(ref _sha1InstructionsEmulated);
+        if ((emulatedCount & 0x3FF) == 0)
+        {
+            MarkExecutionProgress();
+        }
+        if (Interlocked.Exchange(ref _sha1SoftwareFallbackAnnounced, 1) == 0)
+        {
+            Console.Error.WriteLine(
+                "[LOADER][INFO] Host lacks Intel SHA extensions used by the guest; " +
+                "emulating SHA-1 instructions in software.");
+        }
+
+        return true;
+    }
+
+    private unsafe bool TryReadXmmOperand(
+        void* contextRecord,
+        in Instruction instruction,
+        int operandIndex,
+        Span<uint> destination)
+    {
+        switch (instruction.GetOpKind(operandIndex))
+        {
+            case OpKind.Register:
+                if (!TryGetXmmIndex(instruction.GetOpRegister(operandIndex), out var registerIndex))
+                {
+                    return false;
+                }
+
+                ReadContextXmm(contextRecord, registerIndex, destination);
+                return true;
+
+            case OpKind.Memory:
+                if (!TryComputeMemoryAddress(contextRecord, in instruction, out var address))
+                {
+                    return false;
+                }
+
+                var bytes = new byte[16];
+                if (!TryReadHostBytes(address, bytes))
+                {
+                    return false;
+                }
+
+                for (var index = 0; index < 4; index++)
+                {
+                    destination[index] = BinaryPrimitives.ReadUInt32LittleEndian(bytes.AsSpan(index * 4, 4));
+                }
+
+                return true;
+
+            default:
+                return false;
+        }
+    }
+
+    private static bool TryGetXmmIndex(Register register, out int index)
+    {
+        if (register >= Register.XMM0 && register <= Register.XMM15)
+        {
+            index = (int)register - (int)Register.XMM0;
+            return true;
+        }
+
+        index = 0;
+        return false;
+    }
+
+    private static unsafe void ReadContextXmm(void* contextRecord, int index, Span<uint> destination)
+    {
+        var register = (byte*)contextRecord + CTX_XMM0 + (index * 16);
+        for (var lane = 0; lane < 4; lane++)
+        {
+            destination[lane] = *(uint*)(register + (lane * 4));
+        }
+    }
+
+    private static unsafe void WriteContextXmm(void* contextRecord, int index, ReadOnlySpan<uint> source)
+    {
+        var register = (byte*)contextRecord + CTX_XMM0 + (index * 16);
+        for (var lane = 0; lane < 4; lane++)
+        {
+            *(uint*)(register + (lane * 4)) = source[lane];
+        }
     }
 
     private unsafe bool TryEvaluate(

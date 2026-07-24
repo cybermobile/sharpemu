@@ -29,10 +29,8 @@ public sealed class KernelSandboxEscapeTests : IDisposable
         Directory.CreateDirectory(_app0Root);
         Environment.SetEnvironmentVariable("SHARPEMU_APP0_DIR", _app0Root);
 
-        // ResolveApp0Root caches _cachedApp0Root once, so a per-test env var is
-        // ignored after an earlier test populates it. Registering an explicit
-        // mount routes /app0 through the updatable mount table instead, which is
-        // the pattern KernelPathCaseSensitivityTests uses for the same reason.
+        // Register an explicit mount so each test owns an isolated /app0 mapping
+        // and exercises the same mount-table sandbox used by custom guest mounts.
         KernelMemoryCompatExports.RegisterGuestPathMount("/app0", _app0Root);
     }
 

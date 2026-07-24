@@ -16,6 +16,12 @@ internal sealed class MetalGuestGpuBackend : IGuestGpuBackend
 {
     public string BackendName => "Metal";
 
+    // Metal does not yet expose GDS to translated compute shaders, but driver
+    // maintenance operations still need persistent, queue-ordered storage.
+    // All access is enqueued through MetalVideoPresenter, whose render loop is
+    // the single consumer for guest GPU work.
+    private readonly uint[] _gds = new uint[checked((int)GuestGpuGds.DwordCount)];
+
     private static readonly IGuestCompiledShader DepthOnlyFragmentShader =
         new MetalCompiledGuestShader(new Gen5MslShader(
             MslFixedShaders.CreateDepthOnlyFragment(),
@@ -361,6 +367,51 @@ internal sealed class MetalGuestGpuBackend : IGuestGpuBackend
             threadCountX,
             threadCountY,
             threadCountZ);
+    }
+
+    public long SubmitGdsClear(uint offsetDwords, uint countDwords, uint value)
+    {
+        ValidateGdsRange(offsetDwords, countDwords);
+        return MetalVideoPresenter.SubmitOrderedGuestAction(
+            () => Array.Fill(
+                _gds,
+                value,
+                checked((int)offsetDwords),
+                checked((int)countDwords)),
+            $"gds-clear:{offsetDwords}+{countDwords}");
+    }
+
+    public long SubmitGdsRead(
+        uint offsetDwords,
+        uint countDwords,
+        Action<ReadOnlyMemory<uint>> completion)
+    {
+        ArgumentNullException.ThrowIfNull(completion);
+        ValidateGdsRange(offsetDwords, countDwords);
+        return MetalVideoPresenter.SubmitOrderedGuestAction(
+            () =>
+            {
+                var values = new uint[checked((int)countDwords)];
+                Array.Copy(
+                    _gds,
+                    checked((int)offsetDwords),
+                    values,
+                    0,
+                    values.Length);
+                completion(values);
+            },
+            $"gds-read:{offsetDwords}+{countDwords}");
+    }
+
+    private static void ValidateGdsRange(uint offsetDwords, uint countDwords)
+    {
+        if (!GuestGpuGds.IsValidDwordRange(offsetDwords, countDwords))
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(countDwords),
+                $"GDS range {offsetDwords}+{countDwords} exceeds " +
+                $"{GuestGpuGds.DwordCount} dwords.");
+        }
     }
 
     private long _perfShaderCompilations;

@@ -1,5 +1,6 @@
-// Copyright (C) 2026 SharpEmu Emulator Project
-// SPDX-License-Identifier: GPL-2.0-or-later
+// SPDX-FileCopyrightText: 2021 InoriRus
+// SPDX-FileCopyrightText: 2026 SharpEmu Emulator Project
+// SPDX-License-Identifier: GPL-2.0-or-later AND MIT
 
 using System.Buffers.Binary;
 using System.Diagnostics;
@@ -242,7 +243,13 @@ public sealed class SelfLoader : ISelfLoader
             }
         }
 
-        MapLoadSegments(imageData, loadContext, programHeaders, virtualMemory, imageBase);
+        MapLoadSegments(
+            imageData,
+            loadContext,
+            programHeaders,
+            virtualMemory,
+            imageBase,
+            isNextGen);
         // Register every module before relocations so DTPMOD/DTPOFF/TPOFF use
         // the module's real PT_TLS identity and Variant II static offset.
         var tlsInfo = RegisterModuleTlsTemplate(
@@ -380,8 +387,8 @@ public sealed class SelfLoader : ISelfLoader
             throw new InvalidDataException("Input image is too small to contain an ELF header.");
         }
 
-        var magic = BinaryPrimitives.ReadUInt32BigEndian(imageData[..sizeof(uint)]);
-        if (magic is Ps4SelfMagic or Ps5SelfMagic)
+        var leadingWord = BinaryPrimitives.ReadUInt32BigEndian(imageData[..sizeof(uint)]);
+        if (leadingWord is Ps4SelfMagic or Ps5SelfMagic)
         {
             var selfHeader = ReadUnmanaged<SelfHeader>(imageData, 0);
             if (!selfHeader.HasKnownLayout)
@@ -407,11 +414,11 @@ public sealed class SelfLoader : ISelfLoader
         // acceptable here; anything else — most commonly a still-encrypted
         // retail eboot — must be reported clearly rather than failing later
         // with an opaque "not a valid ELF header" message.
-        if (magic != ElfMagic)
+        if (leadingWord != ElfMagic)
         {
             throw new InvalidDataException(
                 $"Image is neither a decrypted ELF nor a recognized fake-signed SELF " +
-                $"(leading bytes 0x{magic:X8}). This is almost certainly a still-encrypted " +
+                $"(leading bytes 0x{leadingWord:X8}). This is almost certainly a still-encrypted " +
                 $"retail eboot — SharpEmu has no decryption keys and requires a decrypted / " +
                 $"fake-signed (fSELF) image.");
         }
@@ -455,7 +462,8 @@ public sealed class SelfLoader : ISelfLoader
         LoadContext loadContext,
         IReadOnlyList<ProgramHeader> programHeaders,
         IVirtualMemory virtualMemory,
-        ulong imageBase)
+        ulong imageBase,
+        bool isNextGen)
     {
         for (var index = 0; index < programHeaders.Count; index++)
         {
@@ -502,12 +510,21 @@ public sealed class SelfLoader : ISelfLoader
                 fileData = imageData.Slice((int)sourceOffset, (int)header.FileSize);
             }
 
+            // Gen5 binaries can carry PT_LOAD entries whose p_flags are zero.
+            // Kyty leaves those pages at the loader allocation's accessible
+            // RWX protection instead of converting them to NoAccess. Preserve
+            // the ABI-v0 meaning of zero flags while making the ABI-v2 quirk
+            // explicit for virtual-memory implementations without a prior
+            // process-wide allocation.
+            var protection = isNextGen && header.Flags == ProgramHeaderFlags.None
+                ? ProgramHeaderFlags.Read | ProgramHeaderFlags.Write | ProgramHeaderFlags.Execute
+                : header.Flags;
             virtualMemory.Map(
                 virtualAddress,
                 header.MemorySize,
                 sourceOffset,
                 fileData,
-                header.Flags);
+                protection);
         }
     }
 

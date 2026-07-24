@@ -75,6 +75,7 @@ public partial class MainWindow : Window
     private bool _awaitingFirstFrame;
     private int _autoScrollTicks;
     private int _activePageIndex;
+    private WindowState _windowStateBeforeFullScreen = WindowState.Maximized;
     private Updater.UpdateInfo? _availableUpdate;
     private string _updateStatusKey = "Updater.Status.Ready";
     private object?[] _updateStatusArgs = [BuildInfo.CommitSha ?? "dev"];
@@ -241,7 +242,13 @@ public partial class MainWindow : Window
         LanguageBox.SelectionChanged += (_, _) => OnLanguageChanged();
 
         GameList.AddHandler(ContextRequestedEvent, OnGameContextRequested, RoutingStrategies.Tunnel);
-        AddHandler(KeyDownEvent, OnPreviewKeyDown, RoutingStrategies.Tunnel);
+        // Fullscreen recovery must still work when a focused child consumes
+        // the key before it reaches the Window's regular KeyDown handler.
+        AddHandler(
+            KeyDownEvent,
+            OnPreviewKeyDown,
+            RoutingStrategies.Tunnel,
+            handledEventsToo: true);
         CtxLaunch.Click += (_, _) => LaunchSelected();
         CtxOpenFolder.Click += (_, _) => OpenSelectedGameFolder();
         CtxCopyPath.Click += async (_, _) =>
@@ -771,6 +778,23 @@ public partial class MainWindow : Window
 
     private void OnPreviewKeyDown(object? sender, KeyEventArgs args)
     {
+        var isMacFullScreenShortcut = OperatingSystem.IsMacOS() &&
+            args.Key == Key.F &&
+            (args.KeyModifiers & (KeyModifiers.Control | KeyModifiers.Meta)) ==
+            (KeyModifiers.Control | KeyModifiers.Meta);
+        if (args.Key == Key.Escape && WindowState == WindowState.FullScreen)
+        {
+            OnWindowFullScreen(this, new RoutedEventArgs());
+            args.Handled = true;
+            return;
+        }
+        if (args.Key == Key.F11 || isMacFullScreenShortcut)
+        {
+            OnWindowFullScreen(this, new RoutedEventArgs());
+            args.Handled = true;
+            return;
+        }
+
         // While a session is on screen, Enter and Space are game input
         // (Cross button). Keyboard focus stays on the launcher window, so a
         // previously clicked, still-focused button (console toggle, session
@@ -789,12 +813,7 @@ public partial class MainWindow : Window
     {
         if (WindowState == WindowState.FullScreen)
         {
-            // Leaving F11 should restore a monitor-sized window with the
-            // launcher chrome, not fall back to the design-time window size.
-            WindowState = WindowState.Maximized;
-            ExtendClientAreaChromeHints = ExtendClientAreaChromeHints.PreferSystemChrome;
-            TitleBar.IsVisible = true;
-            StatusBar.IsVisible = true;
+            WindowState = _windowStateBeforeFullScreen;
             if (_gameFullscreen)
             {
                 _gameFullscreen = false;
@@ -812,10 +831,10 @@ public partial class MainWindow : Window
         }
         else
         {
+            _windowStateBeforeFullScreen = WindowState == WindowState.Minimized
+                ? WindowState.Normal
+                : WindowState;
             WindowState = WindowState.FullScreen;
-            ExtendClientAreaChromeHints = ExtendClientAreaChromeHints.NoChrome;
-            TitleBar.IsVisible = false;
-            StatusBar.IsVisible = false;
             if (_isRunning && !_isStopping && !_awaitingFirstFrame && GameView.IsVisible)
             {
                 // The native child receives its new physical Bounds as soon
@@ -835,6 +854,19 @@ public partial class MainWindow : Window
                 UpdateSessionBarVisibility();
             }
         }
+    }
+
+    private void UpdateFullScreenChrome()
+    {
+        var isFullScreen = WindowState == WindowState.FullScreen;
+        // macOS owns the reveal-on-hover title bar in native fullscreen.
+        // PreferSystemChrome preserves its traffic-light recovery controls.
+        var preserveNativeMacChrome = isFullScreen && OperatingSystem.IsMacOS();
+        ExtendClientAreaChromeHints = isFullScreen && !preserveNativeMacChrome
+            ? ExtendClientAreaChromeHints.NoChrome
+            : ExtendClientAreaChromeHints.PreferSystemChrome;
+        TitleBar.IsVisible = !isFullScreen;
+        StatusBar.IsVisible = !isFullScreen;
     }
 
     private void QueueGameSurfaceResize()
@@ -1664,8 +1696,18 @@ public partial class MainWindow : Window
         base.OnPropertyChanged(change);
         if (change.Property == WindowStateProperty)
         {
+            if (WindowState is not WindowState.FullScreen and not WindowState.Minimized)
+            {
+                _windowStateBeforeFullScreen = WindowState;
+            }
+
             // The XAML WindowState="Maximized" assignment raises this change
             // during InitializeComponent, before named controls are wired up.
+            if (TitleBar is not null && StatusBar is not null)
+            {
+                UpdateFullScreenChrome();
+            }
+
             if (WindowState == WindowState.Minimized)
             {
                 _sndPreview.Pause();

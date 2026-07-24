@@ -19,6 +19,17 @@ public sealed class AvPlayerStreamInfoTests
     private const byte Sentinel = 0xAB;
 
     [Theory]
+    [InlineData("0\n", true)]
+    [InlineData("", false)]
+    [InlineData("  \r\n", false)]
+    public void AudioProbeResultReportsWhetherFfprobeFoundAStream(
+        string output,
+        bool expected)
+    {
+        Assert.Equal(expected, AvPlayerExports.HasAudioProbeResult(output));
+    }
+
+    [Theory]
     [InlineData(false, 0u)]
     [InlineData(true, 0u)]
     [InlineData(false, 1u)]
@@ -117,6 +128,33 @@ public sealed class AvPlayerStreamInfoTests
         Assert.Equal("sceAvPlayerGetStreamInfoEx", export.Name);
         Assert.Equal("libSceAvPlayer", export.LibraryName);
         Assert.Equal(Generation.Gen5, export.Target);
+    }
+
+    [Fact]
+    public void VideoOnlySourceReportsOneStreamAndRejectsAudioInfo()
+    {
+        var memory = new FakeCpuMemory(BaseAddress, MemorySize);
+        var context = new CpuContext(memory, Generation.Gen5);
+        AvPlayerExports.RegisterPlayerForTest(
+            Handle,
+            1280,
+            720,
+            DurationMilliseconds,
+            hasAudio: false);
+
+        try
+        {
+            context[CpuRegister.Rdi] = Handle;
+            Assert.Equal(1, AvPlayerExports.AvPlayerStreamCount(context));
+
+            context[CpuRegister.Rsi] = 1;
+            context[CpuRegister.Rdx] = InfoAddress;
+            Assert.NotEqual(0, AvPlayerExports.AvPlayerGetStreamInfo(context));
+        }
+        finally
+        {
+            AvPlayerExports.RemovePlayerForTest(Handle);
+        }
     }
 
     private static int InvokeGetStreamInfo(CpuContext context, bool useExtendedFunction) =>

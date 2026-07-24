@@ -8,13 +8,7 @@ using Xunit;
 
 namespace SharpEmu.Libs.Tests.PlayGo;
 
-[CollectionDefinition("PlayGoState", DisableParallelization = true)]
-public sealed class PlayGoStateCollection
-{
-    public const string Name = "PlayGoState";
-}
-
-[Collection(PlayGoStateCollection.Name)]
+[Collection(App0EnvironmentCollection.Name)]
 public sealed class PlayGoExportsTests : IDisposable
 {
     private const int BadChunkId = unchecked((int)0x80B2000C);

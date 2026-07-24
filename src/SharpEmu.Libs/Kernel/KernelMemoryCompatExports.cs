@@ -159,7 +159,6 @@ public static partial class KernelMemoryCompatExports
     private static int _hostMemoryReadFallbackCount;
     private static int _nullWcscpyRecoveryCount;
     private static int _nullStrcasecmpRecoveryCount;
-    private static string? _cachedApp0Root;
     private static string? _cachedDownload0Root;
 
     [StructLayout(LayoutKind.Sequential)]
@@ -5071,20 +5070,9 @@ public static partial class KernelMemoryCompatExports
 
     private static string? ResolveApp0Root()
     {
-        var cached = Volatile.Read(ref _cachedApp0Root);
-        if (!string.IsNullOrWhiteSpace(cached))
-        {
-            return cached;
-        }
-
-        var configured = Environment.GetEnvironmentVariable("SHARPEMU_APP0_DIR");
-        if (string.IsNullOrWhiteSpace(configured))
-        {
-            return null;
-        }
-
-        Interlocked.CompareExchange(ref _cachedApp0Root, configured, null);
-        return _cachedApp0Root;
+        // The GUI can launch more than one title in the same host process.
+        // Read the active mount instead of retaining the first game's app0.
+        return Environment.GetEnvironmentVariable("SHARPEMU_APP0_DIR");
     }
 
     // Resolves "." and ".." inside a mount-relative guest path and clamps the
@@ -5159,12 +5147,96 @@ public static partial class KernelMemoryCompatExports
             return string.Empty;
         }
 
+        if (!TryResolveExistingPathIgnoringCase(fullRoot, candidate, out candidate))
+        {
+            return string.Empty;
+        }
+
         if (EscapesMountViaReparsePoint(fullRoot, candidate))
         {
             return string.Empty;
         }
 
         return candidate;
+    }
+
+    private static bool TryResolveExistingPathIgnoringCase(
+        string mountRoot,
+        string candidate,
+        out string resolved)
+    {
+        resolved = mountRoot;
+        var relative = Path.GetRelativePath(mountRoot, candidate);
+        if (relative == ".")
+        {
+            return true;
+        }
+
+        var segments = relative.Split(
+            Path.DirectorySeparatorChar,
+            StringSplitOptions.RemoveEmptyEntries);
+        for (var index = 0; index < segments.Length; index++)
+        {
+            var exact = Path.Combine(resolved, segments[index]);
+            if (File.Exists(exact) || Directory.Exists(exact))
+            {
+                resolved = exact;
+                continue;
+            }
+
+            if (!Directory.Exists(resolved))
+            {
+                for (; index < segments.Length; index++)
+                {
+                    resolved = Path.Combine(resolved, segments[index]);
+                }
+
+                return true;
+            }
+
+            string? match = null;
+            try
+            {
+                foreach (var entry in Directory.EnumerateFileSystemEntries(resolved))
+                {
+                    if (!string.Equals(
+                            Path.GetFileName(entry),
+                            segments[index],
+                            StringComparison.OrdinalIgnoreCase))
+                    {
+                        continue;
+                    }
+
+                    if (match is not null)
+                    {
+                        // A case-sensitive host can contain ambiguous guest names.
+                        return false;
+                    }
+
+                    match = entry;
+                }
+            }
+            catch (Exception ex) when (
+                ex is IOException or UnauthorizedAccessException or
+                ArgumentException or NotSupportedException)
+            {
+                return false;
+            }
+
+            if (match is null)
+            {
+                for (; index < segments.Length; index++)
+                {
+                    resolved = Path.Combine(resolved, segments[index]);
+                }
+
+                return true;
+            }
+
+            resolved = match;
+        }
+
+        return true;
     }
 
     // Lexical containment (Path.GetFullPath + StartsWith) proves the TEXTUAL
