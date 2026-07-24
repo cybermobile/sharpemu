@@ -878,6 +878,12 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 		return nativeEntry();
 	}
 
+	private unsafe static ulong CallNativeEntryU64(nint entry)
+	{
+		var nativeEntry = (delegate* unmanaged[Cdecl]<ulong>)(void*)entry;
+		return nativeEntry();
+	}
+
 	private unsafe static void WriteCtxU64(void* contextRecord, int offset, ulong value)
 	{
 		*(ulong*)((byte*)contextRecord + offset) = value;
@@ -918,7 +924,8 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 
 	private bool ActiveForcedGuestExit
 	{
-		get => HasActiveExecutionThread ? _activeForcedGuestExit : _forcedGuestExit;
+		get => Volatile.Read(ref _forcedGuestExit) ||
+			(HasActiveExecutionThread && _activeForcedGuestExit);
 		set
 		{
 			if (HasActiveExecutionThread)
@@ -1148,12 +1155,14 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 
 	internal void RequestHostShutdown(string reason)
 	{
-		_forcedGuestExit = true;
+		Volatile.Write(ref _forcedGuestExit, true);
 		LastError = string.IsNullOrWhiteSpace(reason)
 			? "Host shutdown requested."
 			: $"Host shutdown requested: {reason}";
 		Console.Error.WriteLine($"[LOADER][INFO] {LastError}");
 	}
+
+	internal bool HostShutdownRequested => Volatile.Read(ref _forcedGuestExit);
 
 	private bool SetupImportStubs(IReadOnlyDictionary<ulong, string> importStubs)
 	{
@@ -5130,7 +5139,8 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 			ActiveGuestThreadYieldReason = null;
 			try
 			{
-				var nativeReturn = CallNativeEntry(ptr);
+				var nativeReturn = CallNativeEntryU64((nint)ptr);
+				context[CpuRegister.Rax] = nativeReturn;
 				if (ActiveGuestThreadYieldRequested)
 				{
 					reason = ActiveGuestThreadYieldReason ?? "guest thread blocked";
@@ -5141,7 +5151,7 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 					reason = LastError ?? "guest thread forced exit";
 					return GuestNativeCallExitReason.ForcedExit;
 				}
-				reason = $"returned 0x{nativeReturn:X8}";
+				reason = $"returned 0x{nativeReturn:X16}";
 				return GuestNativeCallExitReason.Returned;
 			}
 			catch (AccessViolationException ex)
@@ -5298,7 +5308,8 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 			ActiveGuestThreadYieldReason = null;
 			try
 			{
-				var nativeReturn = CallNativeEntry(ptr);
+				var nativeReturn = CallNativeEntryU64((nint)ptr);
+				context[CpuRegister.Rax] = nativeReturn;
 				if (ActiveGuestThreadYieldRequested)
 				{
 					reason = ActiveGuestThreadYieldReason ?? "guest thread blocked";
@@ -5309,7 +5320,7 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 					reason = LastError ?? "guest thread forced exit";
 					return GuestNativeCallExitReason.ForcedExit;
 				}
-				reason = $"returned 0x{nativeReturn:X8}";
+				reason = $"returned 0x{nativeReturn:X16}";
 				return GuestNativeCallExitReason.Returned;
 			}
 			catch (AccessViolationException ex)

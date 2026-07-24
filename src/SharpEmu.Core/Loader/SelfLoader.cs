@@ -17,7 +17,8 @@ namespace SharpEmu.Core.Loader;
 
 public sealed class SelfLoader : ISelfLoader
 {
-    private const uint SelfMagic = 0x4F153D1D;
+    private const uint OrbisSelfMagic = 0x4F153D1D;
+    private const uint ProsperoSelfMagic = 0x5414F5EE;
     private const ulong SelfSegmentFlag = 0x800;
     private const int PageSize = 0x1000;
     private const ulong ImportStubBaseAddress = 0x0000_7000_0000_0000UL;
@@ -361,10 +362,11 @@ public sealed class SelfLoader : ISelfLoader
             throw new InvalidDataException("Input image is too small to contain an ELF header.");
         }
 
-        if (imageData.Length >= sizeof(uint) && BinaryPrimitives.ReadUInt32BigEndian(imageData[..sizeof(uint)]) == SelfMagic)
+        var leadingWord = BinaryPrimitives.ReadUInt32BigEndian(imageData[..sizeof(uint)]);
+        if (leadingWord is OrbisSelfMagic or ProsperoSelfMagic)
         {
             var selfHeader = ReadUnmanaged<SelfHeader>(imageData, 0);
-            if (!selfHeader.HasKnownLayout || selfHeader.Unknown != 0x22)
+            if (!selfHeader.HasKnownLayout)
             {
                 throw new InvalidDataException("SELF header signature is not recognized.");
             }
@@ -388,7 +390,6 @@ public sealed class SelfLoader : ISelfLoader
         // retail eboot — must be reported clearly rather than failing later
         // with an opaque "not a valid ELF header" message.
         const uint ElfMagicBigEndian = 0x7F454C46; // "\x7fELF"
-        var leadingWord = BinaryPrimitives.ReadUInt32BigEndian(imageData[..sizeof(uint)]);
         if (leadingWord != ElfMagicBigEndian)
         {
             throw new InvalidDataException(
@@ -2810,11 +2811,9 @@ public sealed class SelfLoader : ISelfLoader
 
         public ushort SegmentCount => _segmentCount;
 
-        public ushort Unknown => _unknown;
-
         public ulong FileSize => _fileSize;
 
-        public bool HasKnownLayout =>
+        private bool HasKnownOrbisLayout =>
             _ident0 == 0x4F &&
             _ident1 == 0x15 &&
             _ident2 == 0x3D &&
@@ -2826,7 +2825,21 @@ public sealed class SelfLoader : ISelfLoader
             _ident8 == 0x01 &&
             _ident9 == 0x01 &&
             _ident10 == 0x00 &&
-            _ident11 == 0x00;
+            _ident11 == 0x00 &&
+            _unknown == 0x22;
+
+        private bool HasKnownProsperoLayout =>
+            _ident0 == 0x54 &&
+            _ident1 == 0x14 &&
+            _ident2 == 0xF5 &&
+            _ident3 == 0xEE &&
+            _ident4 == 0x10 &&
+            _ident5 == 0x01 &&
+            _ident6 == 0x01 &&
+            _ident7 == 0x12 &&
+            _unknown == 0x32;
+
+        public bool HasKnownLayout => HasKnownOrbisLayout || HasKnownProsperoLayout;
     }
 
     [StructLayout(LayoutKind.Sequential, Pack = 1)]

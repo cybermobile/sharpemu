@@ -5393,6 +5393,24 @@ internal static unsafe class VulkanVideoPresenter
                 feedbackTargets?.Any(target => AddressListContains(
                     "SHARPEMU_FORCE_ATTRIBUTE_FRAGMENT_TARGETS",
                     target.Address)) == true;
+            var effectiveVertexBuffers = draw.VertexBuffers;
+            var effectiveVertexCount = draw.VertexCount;
+            var effectiveTopology = GetPrimitiveTopology(draw.PrimitiveType);
+            var expandedRectList =
+                draw.PrimitiveType == GuestPrimitiveRectList &&
+                draw.IndexBuffer is null &&
+                RectListVertexExpander.TryExpand(
+                    draw.VertexBuffers,
+                    draw.VertexCount,
+                    out effectiveVertexBuffers,
+                    out effectiveVertexCount);
+            if (expandedRectList)
+            {
+                effectiveTopology = PrimitiveTopology.TriangleList;
+                TraceVulkanShader(
+                    $"vk.rectlist_expanded input={draw.VertexCount} " +
+                    $"output={effectiveVertexCount} buffers={effectiveVertexBuffers.Count}");
+            }
             var vertexSpirv = forceFullscreenVertex
                 ? SpirvFixedShaders.CreateFullscreenVertex(0)
                 : draw.VertexSpirv;
@@ -5427,14 +5445,22 @@ internal static unsafe class VulkanVideoPresenter
                 Textures = new TextureResource[draw.Textures.Count],
                 GlobalMemoryBuffers =
                     new GlobalBufferResource[draw.GlobalMemoryBuffers.Count],
-                VertexBuffers = new VertexBufferResource[draw.VertexBuffers.Count],
-                VertexCount = GetDrawVertexCount(draw.PrimitiveType, draw.VertexCount, draw.IndexBuffer),
+                VertexBuffers = new VertexBufferResource[effectiveVertexBuffers.Count],
+                VertexCount = expandedRectList
+                    ? effectiveVertexCount
+                    : GetDrawVertexCount(draw.PrimitiveType, draw.VertexCount, draw.IndexBuffer),
                 InstanceCount = Math.Max(draw.InstanceCount, 1),
-                Topology = GetPrimitiveTopology(draw.PrimitiveType),
+                Topology = effectiveTopology,
                 Blends = draw.RenderState.Blends.ToArray(),
                 Scissor = draw.RenderState.Scissor,
                 Viewport = draw.RenderState.Viewport,
-                Raster = draw.RenderState.Raster,
+                Raster = draw.PrimitiveType == GuestPrimitiveRectList
+                    ? draw.RenderState.Raster with
+                    {
+                        CullFront = false,
+                        CullBack = false,
+                    }
+                    : draw.RenderState.Raster,
                 Depth = draw.RenderState.Depth,
                 HasDepthAttachment = hasDepthAttachment,
                 TargetFormats = renderTargetFormats.ToArray(),
@@ -5542,9 +5568,9 @@ internal static unsafe class VulkanVideoPresenter
                 var sharedVertexResources = new Dictionary<
                     byte[], VertexBufferResource>(
                     System.Collections.Generic.ReferenceEqualityComparer.Instance);
-                for (var index = 0; index < draw.VertexBuffers.Count; index++)
+                for (var index = 0; index < effectiveVertexBuffers.Count; index++)
                 {
-                    var guestVertex = draw.VertexBuffers[index];
+                    var guestVertex = effectiveVertexBuffers[index];
                     if (sharedVertexResources.TryGetValue(
                             guestVertex.Data,
                             out var sharedVertex))
@@ -8435,11 +8461,6 @@ internal static unsafe class VulkanVideoPresenter
             uint vertexCount,
             GuestIndexBuffer? indexBuffer)
         {
-            if (primitiveType == GuestPrimitiveRectList && indexBuffer is null)
-            {
-                return 4;
-            }
-
             return vertexCount;
         }
 

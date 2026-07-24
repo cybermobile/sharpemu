@@ -9,6 +9,7 @@ using System.Reflection;
 using System.Runtime.InteropServices;
 using System.Threading;
 using SharpEmu.Core.Cpu.Disasm;
+using SharpEmu.Core.Cpu.Emulation;
 using SharpEmu.HLE;
 
 namespace SharpEmu.Core.Cpu.Native;
@@ -19,6 +20,11 @@ public sealed partial class DirectExecutionBackend
 	private static int _lazyCommitTraceCount;
 	private static int _guestAllocatorHoleRecoveries;
 	private static int _auxiliaryThreadExecuteFaultRecoveries;
+	private static int _nullTlsCounterRecoveries;
+	private static readonly bool _disableNullTlsCounterRecovery = string.Equals(
+		Environment.GetEnvironmentVariable("SHARPEMU_DISABLE_NULL_TLS_COUNTER_RECOVERY"),
+		"1",
+		StringComparison.Ordinal);
 
 	private unsafe void SetupExceptionHandler()
 	{
@@ -120,6 +126,11 @@ public sealed partial class DirectExecutionBackend
 			}
 
 			if (exceptionCode == 3221225477u && TryHandleLazyCommittedPage(exceptionRecord, rip, rsp))
+			{
+				return -1;
+			}
+			if (exceptionCode == 3221225477u &&
+				TryRecoverNullTlsCounterIncrement(exceptionRecord, contextRecord, rip))
 			{
 				return -1;
 			}
@@ -521,6 +532,52 @@ public sealed partial class DirectExecutionBackend
 			Console.Error.WriteLine(
 				$"[LOADER][WARN] Guest allocator empty-node adapter recovery #{recovery}: " +
 				$"rip=0x{rip:X16} -> 0x{rip + emptyPoolFallbackDelta:X16}");
+			Console.Error.Flush();
+		}
+
+		return true;
+	}
+
+	private unsafe static bool TryRecoverNullTlsCounterIncrement(
+		EXCEPTION_RECORD* exceptionRecord,
+		void* contextRecord,
+		ulong rip)
+	{
+		if (_disableNullTlsCounterRecovery ||
+			exceptionRecord->NumberParameters < 2 ||
+			exceptionRecord->ExceptionInformation[0] > 1 ||
+			ReadCtxU64(contextRecord, CTX_RAX) != 0 ||
+			rip < (ulong)NullTlsCounterIncrementFastPath.SignaturePrefixLength)
+		{
+			return false;
+		}
+
+		var counterIndex = ReadCtxU64(contextRecord, CTX_RCX);
+		if (counterIndex >= 1024 || exceptionRecord->ExceptionInformation[1] != counterIndex * sizeof(uint))
+		{
+			return false;
+		}
+
+		var signatureAddress = rip - (ulong)NullTlsCounterIncrementFastPath.SignaturePrefixLength;
+		if (!IsHostRangeAccessible(
+				signatureAddress,
+				NullTlsCounterIncrementFastPath.SignatureLength,
+				requireWrite: false) ||
+			!NullTlsCounterIncrementFastPath.Matches(
+				new ReadOnlySpan<byte>(
+					(void*)signatureAddress,
+					NullTlsCounterIncrementFastPath.SignatureLength)))
+		{
+			return false;
+		}
+
+		WriteCtxU64(contextRecord, CTX_RIP, rip + NullTlsCounterIncrementFastPath.InstructionLength);
+		var recovery = Interlocked.Increment(ref _nullTlsCounterRecoveries);
+		if (recovery <= 16 || (recovery & (recovery - 1)) == 0)
+		{
+			Console.Error.WriteLine(
+				$"[LOADER][WARN] Skipped null TLS telemetry counter increment #{recovery}: " +
+				$"rip=0x{rip:X16} index={counterIndex}");
 			Console.Error.Flush();
 		}
 

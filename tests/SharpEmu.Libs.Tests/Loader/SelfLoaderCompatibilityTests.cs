@@ -16,6 +16,25 @@ public sealed class SelfLoaderCompatibilityTests
     private const ulong Ps4ImageBase = 0x0000_0000_0040_0000;
 
     [Fact]
+    public void ProsperoSelfMapsPlaintextSegmentEntry()
+    {
+        byte[] payload = [0x48, 0x31, 0xC0, 0xC3];
+        var elf = CreateElf(
+            abiVersion: 2,
+            entryPoint: 0x1000,
+            new Segment(0x1000, ProgramHeaderFlags.Read | ProgramHeaderFlags.Execute, payload));
+        var self = WrapProsperoSelf(elf, payload);
+        var memory = new VirtualMemory();
+
+        var image = new SelfLoader().Load(self, memory);
+
+        Assert.Equal(Ps5ImageBase + 0x1000, image.EntryPoint);
+        var mapped = new byte[payload.Length];
+        Assert.True(memory.TryRead(Ps5ImageBase + 0x1000, mapped));
+        Assert.Equal(payload, mapped);
+    }
+
+    [Fact]
     public void Gen5ZeroFlagLoadSegmentRemainsGuestAccessible()
     {
         var elf = CreateElf(
@@ -184,6 +203,38 @@ public sealed class SelfLoaderCompatibilityTests
             payloadOffset += segment.Data.Length;
         }
 
+        return image;
+    }
+
+    private static byte[] WrapProsperoSelf(byte[] elf, byte[] payload)
+    {
+        const int selfHeaderSize = 32;
+        const int selfSegmentSize = 32;
+        const int embeddedElfOffset = selfHeaderSize + selfSegmentSize;
+        const int elfHeaderAndProgramTableSize = 64 + 56;
+        const int physicalPayloadOffset = 0x1000;
+        var image = new byte[physicalPayloadOffset + payload.Length];
+        var span = image.AsSpan();
+
+        span[0] = 0x54;
+        span[1] = 0x14;
+        span[2] = 0xF5;
+        span[3] = 0xEE;
+        span[4] = 0x10;
+        span[5] = 0x01;
+        span[6] = 0x01;
+        span[7] = 0x12;
+        BinaryPrimitives.WriteUInt16LittleEndian(span[24..], 1);
+        BinaryPrimitives.WriteUInt16LittleEndian(span[26..], 0x32);
+
+        const ulong signedBlockedSegment = 0x804;
+        BinaryPrimitives.WriteUInt64LittleEndian(span[selfHeaderSize..], signedBlockedSegment);
+        BinaryPrimitives.WriteUInt64LittleEndian(span[(selfHeaderSize + 8)..], physicalPayloadOffset);
+        BinaryPrimitives.WriteUInt64LittleEndian(span[(selfHeaderSize + 16)..], (ulong)payload.Length);
+        BinaryPrimitives.WriteUInt64LittleEndian(span[(selfHeaderSize + 24)..], (ulong)payload.Length);
+
+        elf.AsSpan(0, elfHeaderAndProgramTableSize).CopyTo(span[embeddedElfOffset..]);
+        payload.CopyTo(span[physicalPayloadOffset..]);
         return image;
     }
 

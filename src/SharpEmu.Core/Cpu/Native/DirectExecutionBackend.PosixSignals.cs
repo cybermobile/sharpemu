@@ -4,6 +4,7 @@
 using System;
 using System.Runtime.InteropServices;
 using System.Threading;
+using SharpEmu.Core.Cpu.Emulation;
 using SharpEmu.HLE;
 
 namespace SharpEmu.Core.Cpu.Native;
@@ -47,8 +48,12 @@ public sealed unsafe partial class DirectExecutionBackend
 	private const int DarwinUcontextMcontextOffset = 48;
 	private const int DarwinMcontextErrOffset = 4;
 	private const int DarwinMcontextFaultAddressOffset = 8;
+	private const int DarwinMcontextXmm0Offset = 352;
 	private const int LinuxUcontextGregsOffset = 40;
 	private const int LinuxGregsErrOffset = 19 * 8;
+	private const int LinuxMcontextFpregsOffset = 23 * 8;
+	private const int LinuxFpregsXmm0Offset = 160;
+	private const int PosixXmmRegisterBytes = 16 * 16;
 
 	// Byte offsets of the general registers relative to GetPosixRegisterBase,
 	// ordered to match the contiguous Win64 CONTEXT block CTX_RAX..CTX_RIP
@@ -122,8 +127,8 @@ public sealed unsafe partial class DirectExecutionBackend
 	{
 		byte* fakeUcontext = stackalloc byte[512];
 		new Span<byte>(fakeUcontext, 512).Clear();
-		byte* fakeMcontext = stackalloc byte[512];
-		new Span<byte>(fakeMcontext, 512).Clear();
+		byte* fakeMcontext = stackalloc byte[768];
+		new Span<byte>(fakeMcontext, 768).Clear();
 		if (OperatingSystem.IsMacOS())
 		{
 			*(byte**)(fakeUcontext + DarwinUcontextMcontextOffset) = fakeMcontext;
@@ -154,6 +159,8 @@ public sealed unsafe partial class DirectExecutionBackend
 			// scan and the PRT range check, then bails out silently.
 			record.ExceptionInformation[1] = 0x70000;
 			_ = TryHandleLazyCommittedPage(&record, 0, 0);
+			_ = TryRecoverNullTlsCounterIncrement(&record, contextRecord, 0);
+			_ = NullTlsCounterIncrementFastPath.Matches(ReadOnlySpan<byte>.Empty);
 			ChainPreviousPosixAction(0, 0, 0);
 		}
 		finally
@@ -278,6 +285,12 @@ public sealed unsafe partial class DirectExecutionBackend
 		{
 			WriteCtxU64(contextRecord, CTX_RAX + i * 8, *(ulong*)(registers + offsets[i]));
 		}
+		byte* xmmRegisters = GetPosixXmmRegisterBase(registers);
+		if (xmmRegisters != null)
+		{
+			new ReadOnlySpan<byte>(xmmRegisters, PosixXmmRegisterBytes)
+				.CopyTo(new Span<byte>(contextRecord + CTX_XMM0, PosixXmmRegisterBytes));
+		}
 
 		EXCEPTION_RECORD record = default;
 		record.ExceptionAddress = (void*)ReadCtxU64(contextRecord, CTX_RIP);
@@ -307,7 +320,8 @@ public sealed unsafe partial class DirectExecutionBackend
 		pointers.ContextRecord = contextRecord;
 
 		int traceIndex = _posixSignalWarmup ? 0 : Interlocked.Increment(ref _posixSignalTraceCount);
-		bool traceSignal = traceIndex > 0 && (traceIndex <= 16 || traceIndex % 1024 == 0 ||
+		bool traceSignal = traceIndex > 0 && (traceIndex <= 16 ||
+			(signal != PosixSigIll && traceIndex % 1024 == 0) ||
 			string.Equals(Environment.GetEnvironmentVariable("SHARPEMU_LOG_POSIX_SIGNALS"), "1", StringComparison.Ordinal));
 		if (traceSignal)
 		{
@@ -344,7 +358,23 @@ public sealed unsafe partial class DirectExecutionBackend
 		{
 			*(ulong*)(registers + offsets[i]) = ReadCtxU64(contextRecord, CTX_RAX + i * 8);
 		}
+		if (xmmRegisters != null)
+		{
+			new ReadOnlySpan<byte>(contextRecord + CTX_XMM0, PosixXmmRegisterBytes)
+				.CopyTo(new Span<byte>(xmmRegisters, PosixXmmRegisterBytes));
+		}
 		return true;
+	}
+
+	private static byte* GetPosixXmmRegisterBase(byte* registers)
+	{
+		if (OperatingSystem.IsMacOS())
+		{
+			return registers + DarwinMcontextXmm0Offset;
+		}
+
+		byte* floatingPointState = *(byte**)(registers + LinuxMcontextFpregsOffset);
+		return floatingPointState == null ? null : floatingPointState + LinuxFpregsXmm0Offset;
 	}
 
 	private static byte* GetPosixRegisterBase(nint ucontext)

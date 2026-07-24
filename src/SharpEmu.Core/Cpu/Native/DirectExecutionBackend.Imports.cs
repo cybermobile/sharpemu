@@ -160,6 +160,17 @@ public sealed partial class DirectExecutionBackend
 			return 18446744071562199042uL;
 		}
 		ImportStubEntry importStubEntry = _importEntries[importIndex];
+		var returnRip = *(ulong*)(argPackPtr + 96);
+		if (HostShutdownRequested &&
+			TryForceHostShutdownToHostStub(
+				argPackPtr,
+				num,
+				returnRip,
+				importStubEntry.Nid))
+		{
+			cpuContext[CpuRegister.Rax] = 1uL;
+			return 1uL;
+		}
 		if (_perfHleHistogram)
 		{
 			RecordPerfHleCall(importStubEntry.Export?.Name ?? importStubEntry.Nid);
@@ -1653,6 +1664,34 @@ public sealed partial class DirectExecutionBackend
 		LastError = $"Detected repeating import loop at import#{dispatchIndex} ({nid}) and forced guest exit.";
 		Console.Error.WriteLine($"[LOADER][ERROR] Import-loop guard fired at import#{dispatchIndex}: nid={nid} ret=0x{returnRip:X16} -> host_exit=0x{num:X16}");
 		DumpRecentImportTrace();
+		return true;
+	}
+
+	private unsafe bool TryForceHostShutdownToHostStub(
+		nint argPackPtr,
+		long dispatchIndex,
+		ulong returnRip,
+		string nid)
+	{
+		var hostExit = ActiveEntryReturnSentinelRip;
+		if (hostExit < 65536 || !TryPatchActiveGuestReturnSlot(hostExit))
+		{
+			return false;
+		}
+
+		try
+		{
+			*(ulong*)(argPackPtr + 96) = hostExit;
+		}
+		catch
+		{
+			return false;
+		}
+
+		ActiveForcedGuestExit = true;
+		Console.Error.WriteLine(
+			$"[LOADER][INFO] Host shutdown unwinding guest at import#{dispatchIndex}: " +
+			$"nid={nid} ret=0x{returnRip:X16} -> host_exit=0x{hostExit:X16}");
 		return true;
 	}
 

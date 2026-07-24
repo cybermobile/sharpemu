@@ -157,9 +157,9 @@ public static class VideoOutExports
     {
         Console.Error.WriteLine($"[LOADER][INFO] Host shutdown requested: {reason}");
         VulkanVideoPresenter.RequestClose();
-        AudioOutExports.ShutdownAllPorts();
         Interlocked.Exchange(ref _vblankStopRequested, 1);
         HostSessionControl.RequestShutdown(reason);
+        AudioOutExports.ShutdownAllPorts();
         ThreadPool.QueueUserWorkItem(static _ =>
         {
             Thread.Sleep(2000);

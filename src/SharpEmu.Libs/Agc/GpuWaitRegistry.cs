@@ -99,7 +99,8 @@ internal static class GpuWaitRegistry
     /// </summary>
     public static List<WaitingDcb>? CollectSatisfied(
         object memory,
-        Func<ulong, bool, ulong?> readValue)
+        Func<ulong, bool, ulong?> readValue,
+        object? excludedState = null)
     {
         List<WaitingDcb>? woken = null;
         lock (_gate)
@@ -110,6 +111,15 @@ internal static class GpuWaitRegistry
                 for (var i = list.Count - 1; i >= 0; i--)
                 {
                     if (!ReferenceEquals(list[i].Memory, memory))
+                    {
+                        continue;
+                    }
+
+                    // Parser safe-points can drain another logical GPU queue
+                    // while the current queue still owns its parser state.
+                    // Never attempt to resume that same state reentrantly.
+                    if (excludedState is not null &&
+                        ReferenceEquals(list[i].State, excludedState))
                     {
                         continue;
                     }

@@ -6,6 +6,7 @@ using Xunit;
 
 namespace SharpEmu.Libs.Tests.VideoOut;
 
+[Collection(App0EnvironmentCollection.Name)]
 public sealed class PngSplashLoaderTests
 {
     private const int IhdrCrcOffset = 29;

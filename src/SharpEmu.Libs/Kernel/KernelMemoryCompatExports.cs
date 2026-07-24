@@ -153,7 +153,6 @@ public static partial class KernelMemoryCompatExports
     private static int _hostMemoryReadFallbackCount;
     private static int _nullWcscpyRecoveryCount;
     private static int _nullStrcasecmpRecoveryCount;
-    private static string? _cachedApp0Root;
     private static string? _cachedDownload0Root;
 
     [StructLayout(LayoutKind.Sequential)]
@@ -4616,47 +4615,10 @@ public static partial class KernelMemoryCompatExports
         }
 
         var app0Root = ResolveApp0Root();
-        if (!string.IsNullOrWhiteSpace(app0Root))
+        if (!string.IsNullOrWhiteSpace(app0Root) &&
+            TryResolveApp0GuestPath(app0Root, guestPath, out var app0Path))
         {
-            if (string.Equals(guestPath, "$", StringComparison.Ordinal) ||
-                string.Equals(guestPath, "$/", StringComparison.Ordinal) ||
-                string.Equals(guestPath, "$\\", StringComparison.Ordinal))
-            {
-                return app0Root;
-            }
-
-            if (guestPath.StartsWith("$/", StringComparison.Ordinal) ||
-                guestPath.StartsWith("$\\", StringComparison.Ordinal))
-            {
-                var relative = NormalizeMountRelativePath(guestPath[2..]);
-                return Path.Combine(app0Root, relative);
-            }
-
-            if (string.Equals(guestPath, "/app0", StringComparison.OrdinalIgnoreCase) ||
-                string.Equals(guestPath, "app0", StringComparison.OrdinalIgnoreCase))
-            {
-                return app0Root;
-            }
-
-            if (guestPath.StartsWith("/app0/", StringComparison.OrdinalIgnoreCase))
-            {
-                var relative = NormalizeMountRelativePath(guestPath["/app0/".Length..]);
-                return Path.Combine(app0Root, relative);
-            }
-
-            if (guestPath.StartsWith("app0/", StringComparison.OrdinalIgnoreCase))
-            {
-                var relative = NormalizeMountRelativePath(guestPath["app0/".Length..]);
-                return Path.Combine(app0Root, relative);
-            }
-
-            if (!Path.IsPathFullyQualified(guestPath) &&
-                !guestPath.StartsWith("/", StringComparison.Ordinal) &&
-                !guestPath.StartsWith("\\", StringComparison.Ordinal))
-            {
-                var relative = guestPath.Replace('/', Path.DirectorySeparatorChar);
-                return Path.Combine(app0Root, relative);
-            }
+            return app0Path;
         }
 
         return guestPath;
@@ -4707,22 +4669,165 @@ public static partial class KernelMemoryCompatExports
         return true;
     }
 
-    private static string? ResolveApp0Root()
+    internal static string? ResolveExistingApp0FilePath(string guestPath)
     {
-        var cached = Volatile.Read(ref _cachedApp0Root);
-        if (!string.IsNullOrWhiteSpace(cached))
-        {
-            return cached;
-        }
-
-        var configured = Environment.GetEnvironmentVariable("SHARPEMU_APP0_DIR");
-        if (string.IsNullOrWhiteSpace(configured))
+        var app0Root = ResolveApp0Root();
+        if (string.IsNullOrWhiteSpace(app0Root) ||
+            !TryResolveApp0GuestPath(app0Root, guestPath, out var hostPath))
         {
             return null;
         }
 
-        Interlocked.CompareExchange(ref _cachedApp0Root, configured, null);
-        return _cachedApp0Root;
+        return File.Exists(hostPath) ? hostPath : null;
+    }
+
+    private static bool TryResolveApp0GuestPath(
+        string app0Root,
+        string guestPath,
+        out string hostPath)
+    {
+        hostPath = string.Empty;
+        var normalized = guestPath.Replace('\\', '/');
+        var discardLeadingParentHops = false;
+        string relative;
+
+        if (string.Equals(normalized, "$", StringComparison.Ordinal) ||
+            string.Equals(normalized, "$/", StringComparison.Ordinal) ||
+            string.Equals(normalized, "/app0", StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(normalized, "app0", StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(normalized, "app0:", StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(normalized, "app0:/", StringComparison.OrdinalIgnoreCase))
+        {
+            relative = string.Empty;
+        }
+        else if (normalized.StartsWith("$/", StringComparison.Ordinal))
+        {
+            relative = normalized[2..];
+        }
+        else if (normalized.StartsWith("/app0/", StringComparison.OrdinalIgnoreCase))
+        {
+            relative = normalized["/app0/".Length..];
+        }
+        else if (normalized.StartsWith("app0:/", StringComparison.OrdinalIgnoreCase))
+        {
+            relative = normalized["app0:/".Length..];
+        }
+        else if (normalized.StartsWith("app0/", StringComparison.OrdinalIgnoreCase))
+        {
+            relative = normalized["app0/".Length..];
+        }
+        else
+        {
+            if (Path.IsPathFullyQualified(normalized) ||
+                normalized.StartsWith("/", StringComparison.Ordinal) ||
+                (normalized.Length >= 3 &&
+                 char.IsAsciiLetter(normalized[0]) &&
+                 normalized[1] == ':' &&
+                 normalized[2] == '/'))
+            {
+                return false;
+            }
+
+            relative = normalized;
+            discardLeadingParentHops = true;
+        }
+
+        while (relative.StartsWith("./", StringComparison.Ordinal))
+        {
+            relative = relative[2..];
+        }
+
+        // Unreal cooks paths relative to a virtual executable directory below
+        // app0 (for example ../../../Game/Content). The host process is already
+        // rooted at app0, so discard only those leading virtual parent hops.
+        if (discardLeadingParentHops)
+        {
+            while (relative.StartsWith("../", StringComparison.Ordinal))
+            {
+                relative = relative[3..];
+            }
+        }
+
+        var segments = relative.Split('/', StringSplitOptions.RemoveEmptyEntries);
+        var root = Path.GetFullPath(app0Root);
+        if (segments.Any(static segment => segment is "." or ".."))
+        {
+            hostPath = Path.Combine(root, ".sharpemu-invalid-guest-path");
+            return true;
+        }
+
+        var candidate = segments.Length == 0
+            ? root
+            : Path.GetFullPath(Path.Combine([root, .. segments]));
+        var rootWithSeparator = Path.TrimEndingDirectorySeparator(root) +
+            Path.DirectorySeparatorChar;
+        if (!string.Equals(candidate, root, StringComparison.OrdinalIgnoreCase) &&
+            !candidate.StartsWith(rootWithSeparator, StringComparison.OrdinalIgnoreCase))
+        {
+            hostPath = Path.Combine(root, ".sharpemu-invalid-guest-path");
+            return true;
+        }
+
+        hostPath = ResolveExistingPathIgnoringCase(root, segments);
+        return true;
+    }
+
+    private static string ResolveExistingPathIgnoringCase(
+        string root,
+        IReadOnlyList<string> segments)
+    {
+        var current = root;
+        for (var index = 0; index < segments.Count; index++)
+        {
+            var exact = Path.Combine(current, segments[index]);
+            if (File.Exists(exact) || Directory.Exists(exact))
+            {
+                current = exact;
+                continue;
+            }
+
+            string? match = null;
+            try
+            {
+                if (Directory.Exists(current))
+                {
+                    match = Directory.EnumerateFileSystemEntries(current)
+                        .FirstOrDefault(entry => string.Equals(
+                            Path.GetFileName(entry),
+                            segments[index],
+                            StringComparison.OrdinalIgnoreCase));
+                }
+            }
+            catch (IOException)
+            {
+                // Preserve the unresolved in-root path and let the caller
+                // return its normal filesystem error.
+            }
+            catch (UnauthorizedAccessException)
+            {
+                // Preserve the unresolved in-root path and let the caller
+                // return its normal filesystem error.
+            }
+
+            if (match is not null)
+            {
+                current = match;
+                continue;
+            }
+
+            for (var remaining = index; remaining < segments.Count; remaining++)
+            {
+                current = Path.Combine(current, segments[remaining]);
+            }
+            break;
+        }
+
+        return current;
+    }
+
+    private static string? ResolveApp0Root()
+    {
+        return Environment.GetEnvironmentVariable("SHARPEMU_APP0_DIR");
     }
 
     private static string NormalizeMountRelativePath(string relativePath)
