@@ -141,6 +141,62 @@ public sealed class PthreadMutexSemanticsTests
     }
 
     [Fact]
+    public async Task AbandonedMutex_HandsOwnershipToQueuedHostWaiter()
+    {
+        const ulong memoryBase = 0x2_1000_0000;
+        const ulong mutexAddress = memoryBase + 0x100;
+        var memory = new AllocatingCpuMemory(memoryBase, 0x4000);
+        using var ownerAcquired = new ManualResetEventSlim(false);
+        using var abandonOwner = new ManualResetEventSlim(false);
+        ulong ownerThreadHandle = 0;
+
+        var owner = Task.Factory.StartNew(
+            () =>
+            {
+                var ownerContext = new CpuContext(memory, Generation.Gen5);
+                Assert.True(ownerContext.TryWriteUInt64(mutexAddress, 1));
+                ownerContext[CpuRegister.Rdi] = mutexAddress;
+                Assert.Equal(0, KernelPthreadCompatExports.PthreadMutexLock(ownerContext));
+                ownerThreadHandle = KernelPthreadState.GetCurrentThreadHandle();
+                ownerAcquired.Set();
+                abandonOwner.Wait(TimeSpan.FromSeconds(5));
+            },
+            CancellationToken.None,
+            TaskCreationOptions.LongRunning,
+            TaskScheduler.Default);
+
+        Assert.True(ownerAcquired.Wait(TimeSpan.FromSeconds(5)));
+        var waiter = Task.Factory.StartNew(
+            () =>
+            {
+                var waiterContext = new CpuContext(memory, Generation.Gen5);
+                waiterContext[CpuRegister.Rdi] = mutexAddress;
+                var lockResult = KernelPthreadCompatExports.PthreadMutexLock(waiterContext);
+                var unlockResult = lockResult == 0
+                    ? KernelPthreadCompatExports.PthreadMutexUnlock(waiterContext)
+                    : int.MinValue;
+                return (lockResult, unlockResult);
+            },
+            CancellationToken.None,
+            TaskCreationOptions.LongRunning,
+            TaskScheduler.Default);
+
+        await Task.Delay(50);
+        Assert.False(waiter.IsCompleted);
+        Assert.Equal(
+            1,
+            KernelPthreadCompatExports.AbandonMutexesOwnedByThread(
+                ownerThreadHandle,
+                "unit-test"));
+        Assert.Equal(
+            (0, 0),
+            await waiter.WaitAsync(TimeSpan.FromSeconds(5)));
+
+        abandonOwner.Set();
+        await owner.WaitAsync(TimeSpan.FromSeconds(5));
+    }
+
+    [Fact]
     public async Task ContendedMutex_PreservesMutualExclusionUnderLoad()
     {
         const ulong memoryBase = 0x3_0000_0000;

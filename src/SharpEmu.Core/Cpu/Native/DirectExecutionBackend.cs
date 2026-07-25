@@ -306,12 +306,6 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 
 	private readonly Dictionary<string, ulong> _runtimeSymbolsByName = new Dictionary<string, ulong>(StringComparer.Ordinal);
 
-	private readonly RecentImportTraceEntry[] _recentImportTrace = new RecentImportTraceEntry[64];
-
-	private int _recentImportTraceCount;
-
-	private int _recentImportTraceWriteIndex;
-
 	private readonly string[] _distinctImportNidHistory = new string[128];
 
 	private int _distinctImportNidHistoryCount;
@@ -357,6 +351,10 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 	private long _probeImportReturnAddressCount;
 
 	private string? _importFilter;
+
+	private bool _importFilterExternalOnly;
+
+	private string? _importFilterThreadName;
 
 	private bool _disableImportLoopGuard;
 
@@ -748,6 +746,11 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 	private long _lastProgressTimestamp;
 
 	private int _stallWatchdogTriggered;
+
+	private long _unresolvedImportCount;
+
+	private long _lastRendererStallReportedProgressTimestamp = -1;
+	private int _frameStallAbortTriggered;
 
 	private volatile bool _stallWatchdogStop;
 
@@ -1148,8 +1151,6 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 		result = OrbisGen2Result.ORBIS_GEN2_OK;
 		LastError = null;
 		InitializeRuntimeSymbolIndex(runtimeSymbols);
-		_recentImportTraceCount = 0;
-		_recentImportTraceWriteIndex = 0;
 		_distinctImportNidHistoryCount = 0;
 		_distinctImportNidHistoryWriteIndex = 0;
 		_lastDistinctImportNid = string.Empty;
@@ -1176,6 +1177,11 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 			Environment.GetEnvironmentVariable("SHARPEMU_PROBE_IMPORT_RET_ADDRESS"));
 		_probeImportReturnAddressCount = 0;
 		_importFilter = Environment.GetEnvironmentVariable("SHARPEMU_LOG_IMPORT_FILTER");
+		_importFilterExternalOnly = string.Equals(
+			Environment.GetEnvironmentVariable("SHARPEMU_LOG_IMPORT_EXTERNAL_ONLY"),
+			"1",
+			StringComparison.Ordinal);
+		_importFilterThreadName = Environment.GetEnvironmentVariable("SHARPEMU_LOG_IMPORT_THREAD");
 		_disableImportLoopGuard = string.Equals(
 			Environment.GetEnvironmentVariable("SHARPEMU_DISABLE_IMPORT_LOOP_GUARD"),
 			"1",
@@ -1199,6 +1205,9 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 		ClearGuestThreads();
 		_contextualUnresolvedReturnSites.Clear();
 		_stallWatchdogTriggered = 0;
+		Interlocked.Exchange(ref _unresolvedImportCount, 0);
+		_lastRendererStallReportedProgressTimestamp = -1;
+		_frameStallAbortTriggered = 0;
 		_stallWatchdogStop = false;
 		_readyDispatchStop = false;
 		_patchedEa020eLookupCall = false;
@@ -1707,7 +1716,8 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 	private static bool IsHlePreferredNid(string nid)
 	{
 		return string.Equals(nid, "QrZZdJ8XsX0", StringComparison.Ordinal) ||
-			string.Equals(nid, "Q3VBxCXhUHs", StringComparison.Ordinal);
+			string.Equals(nid, "Q3VBxCXhUHs", StringComparison.Ordinal) ||
+			string.Equals(nid, "r8mvOaWdi28", StringComparison.Ordinal);
 	}
 
 	private static bool IsLibcLibrary(string libraryName)
@@ -5580,6 +5590,7 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 			Volatile.Write(ref thread.HostThreadId, 0);
 			GuestThreadExecution.RestoreGuestThread(previousGuestThreadHandle);
 			LastError = previousLastError;
+			PendingGuestException? deferredException = null;
 			lock (_guestThreadGate)
 			{
 				if (ReferenceEquals(thread.HostThread, Thread.CurrentThread))
@@ -5587,6 +5598,30 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 					thread.HostThread = null;
 				}
 				thread.ExecutorActive = false;
+				if (thread.State == GuestThreadRunState.Blocked &&
+					TryRemovePendingGuestExceptionLocked(thread.ThreadHandle, out var pending))
+				{
+					deferredException = pending;
+				}
+			}
+
+			// A guest exception may arrive after a blocking import requests a
+			// yield but before the scheduler publishes Blocked. Its callback
+			// cannot safely share a continuation already committed to yielding.
+			// Once executor ownership is released, route it through the normal
+			// parked-thread delivery path instead.
+			if (deferredException is { } deferred &&
+				!TryRaiseGuestException(
+					thread.Context,
+					thread.ThreadHandle,
+					deferred.Handler,
+					deferred.ExceptionType,
+					out var deferredError))
+			{
+				Console.Error.WriteLine(
+					$"[LOADER][ERROR] Deferred guest exception delivery failed: " +
+					$"target=0x{thread.ThreadHandle:X16} type=0x{deferred.ExceptionType:X2} " +
+					$"error={deferredError ?? "unknown"}");
 			}
 		}
 	}
@@ -6436,6 +6471,26 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 		return 20;
 	}
 
+	private static int GetFrameStallWatchdogSeconds()
+	{
+		if (int.TryParse(Environment.GetEnvironmentVariable("SHARPEMU_FRAME_STALL_SECONDS"), out var result))
+		{
+			return Math.Max(0, result);
+		}
+
+		return 30;
+	}
+
+	private static int GetFrameStallAbortSeconds()
+	{
+		if (int.TryParse(Environment.GetEnvironmentVariable("SHARPEMU_FRAME_STALL_ABORT_SECONDS"), out var result))
+		{
+			return Math.Max(0, result);
+		}
+
+		return 120;
+	}
+
 
 	private void StartStallWatchdog()
 	{
@@ -6472,6 +6527,8 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 				: 0;
 		long periodicSnapshotTicks = (long)((double)periodicSnapshotSeconds * Stopwatch.Frequency);
 		long lastPeriodicSnapshot = Stopwatch.GetTimestamp();
+		var frameStallWatchdogSeconds = GetFrameStallWatchdogSeconds();
+		var frameStallAbortSeconds = GetFrameStallAbortSeconds();
 		_stallWatchdogThread = new Thread(new ThreadStart(delegate
 		{
 			while (!_stallWatchdogStop)
@@ -6481,6 +6538,7 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 				{
 					break;
 				}
+				CheckFrameProgressStall(frameStallWatchdogSeconds, frameStallAbortSeconds);
 				if (periodicSnapshotTicks > 0 &&
 					Stopwatch.GetTimestamp() - lastPeriodicSnapshot >= periodicSnapshotTicks)
 				{
@@ -6528,6 +6586,121 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 			Name = "SharpEmu-StallWatchdog"
 		};
 		_stallWatchdogThread.Start();
+	}
+
+	private void CheckFrameProgressStall(int frameStallWatchdogSeconds, int frameStallAbortSeconds)
+	{
+		if (frameStallWatchdogSeconds <= 0 && frameStallAbortSeconds <= 0)
+		{
+			return;
+		}
+
+		var now = Stopwatch.GetTimestamp();
+		var progress = RuntimeProgress.Capture();
+		if (progress.SubmittedFrames == 0)
+		{
+			return;
+		}
+
+		var noRendererProgressSeconds = progress.SecondsSinceRendererProgress(now);
+		if (frameStallWatchdogSeconds > 0 &&
+			noRendererProgressSeconds >= frameStallWatchdogSeconds &&
+			Volatile.Read(ref _lastRendererStallReportedProgressTimestamp) != progress.LastRendererProgressTimestamp)
+		{
+			Volatile.Write(ref _lastRendererStallReportedProgressTimestamp, progress.LastRendererProgressTimestamp);
+			LogCompactRuntimeStallSnapshot(progress, now);
+		}
+
+		if (frameStallAbortSeconds > 0 &&
+			noRendererProgressSeconds >= frameStallAbortSeconds &&
+			Interlocked.Exchange(ref _frameStallAbortTriggered, 1) == 0)
+		{
+			Console.Error.WriteLine(FormattableString.Invariant(
+				$"[LOADER][ERROR] No renderer progress for {noRendererProgressSeconds:F1}s; stopping the guest session (SHARPEMU_FRAME_STALL_ABORT_SECONDS={frameStallAbortSeconds})."));
+			Console.Error.Flush();
+			HostSessionControl.RequestShutdown("frame-stall-timeout");
+		}
+	}
+
+	private void LogCompactRuntimeStallSnapshot(RuntimeProgressSnapshot progress, long nowTimestamp)
+	{
+		var threads = SnapshotGuestThreads();
+		var ready = 0;
+		var running = 0;
+		var blocked = 0;
+		var faulted = 0;
+		var blockReasons = new Dictionary<string, int>(StringComparer.Ordinal);
+		var runningNames = new List<string>(4);
+		foreach (var thread in threads)
+		{
+			switch (thread.State)
+			{
+				case GuestThreadRunState.Ready:
+					ready++;
+					break;
+				case GuestThreadRunState.Running:
+					running++;
+					if (runningNames.Count < 4)
+					{
+						runningNames.Add(string.IsNullOrWhiteSpace(thread.Name) ? $"0x{thread.ThreadHandle:X}" : thread.Name);
+					}
+					break;
+				case GuestThreadRunState.Blocked:
+					blocked++;
+					var reason = thread.BlockReason ?? "unknown";
+					blockReasons.TryGetValue(reason, out var reasonCount);
+					blockReasons[reason] = reasonCount + 1;
+					break;
+				case GuestThreadRunState.Faulted:
+					faulted++;
+					break;
+			}
+		}
+
+		var currentImport = DescribeCurrentImport();
+		var blockerSummary = blockReasons.Count == 0
+			? "none"
+			: string.Join(
+				',',
+				blockReasons
+					.OrderByDescending(static pair => pair.Value)
+					.Take(3)
+					.Select(static pair => $"{pair.Value}x{pair.Key}"));
+		var noRendererProgressSeconds = progress.SecondsSinceRendererProgress(nowTimestamp);
+		Console.Error.WriteLine(FormattableString.Invariant(
+			$"[LOADER][WARN] Runtime stall summary: no_renderer_progress={noRendererProgressSeconds:F1}s submitted={progress.SubmittedFrames} presented={progress.PresentedFrames} gpu_completed={progress.CompletedGpuSubmissions} imports={Volatile.Read(ref _importDispatchCount)} unresolved={Interlocked.Read(ref _unresolvedImportCount)} threads={threads.Length} ready={ready} running={running} blocked={blocked} faulted={faulted} current_import={currentImport} blockers={blockerSummary} running_names={string.Join(',', runningNames)}"));
+		if (string.Equals(
+			Environment.GetEnvironmentVariable("SHARPEMU_STALL_VERBOSE"),
+			"1",
+			StringComparison.Ordinal))
+		{
+			LogStallWatchdogSnapshot();
+		}
+		Console.Error.Flush();
+	}
+
+	private string DescribeCurrentImport()
+	{
+		var context = _cpuContext;
+		if (context is null)
+		{
+			return "none";
+		}
+
+		var importAddress = context.Rip & 0xFFFFFFFFFFFFFFF0uL;
+		foreach (var entry in _importEntries)
+		{
+			if (entry.Address != importAddress)
+			{
+				continue;
+			}
+
+			return _moduleManager.TryGetExport(entry.Nid, out var export)
+				? $"{export.LibraryName}:{export.Name}"
+				: entry.Nid;
+		}
+
+		return $"guest@0x{context.Rip:X16}";
 	}
 
 	private bool HasReadyGuestThread()
@@ -6819,7 +6992,17 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 			if (threads.Length != 0)
 			{
 				var logged = 0;
-				foreach (var thread in threads)
+				foreach (var thread in threads
+					.OrderBy(static thread => thread.State switch
+					{
+						GuestThreadRunState.Running => 0,
+						GuestThreadRunState.Ready => 1,
+						GuestThreadRunState.Faulted => 2,
+						GuestThreadRunState.Blocked => 3,
+						GuestThreadRunState.Exited => 4,
+						_ => 5,
+					})
+					.ThenByDescending(static thread => Interlocked.Read(ref thread.ImportCount)))
 				{
 					var hostThreadId = Volatile.Read(ref thread.HostThreadId);
 					var hostContextText = string.Empty;
@@ -6837,7 +7020,8 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 
 					Console.Error.WriteLine(
 						$"[LOADER][ERROR] Stall guest-thread: handle=0x{thread.ThreadHandle:X16} name='{thread.Name}' " +
-						$"state={thread.State} imports={Interlocked.Read(ref thread.ImportCount)} " +
+						$"state={thread.State} guest_rip=0x{thread.Context.Rip:X16} " +
+						$"guest_rsp=0x{thread.Context[CpuRegister.Rsp]:X16} imports={Interlocked.Read(ref thread.ImportCount)} " +
 						$"nid={Volatile.Read(ref thread.LastImportNid) ?? "none"} ret=0x{Volatile.Read(ref thread.LastReturnRip):X16} " +
 						$"rdi=0x{Volatile.Read(ref thread.LastImportRdi):X16} rsi=0x{Volatile.Read(ref thread.LastImportRsi):X16} " +
 						$"rdx=0x{Volatile.Read(ref thread.LastImportRdx):X16} block={thread.BlockReason ?? "none"}{hostContextText}");

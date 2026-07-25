@@ -344,6 +344,11 @@ public sealed partial class DirectExecutionBackend
 		bool flag3 = num >= 1020 && num <= 1040;
 		bool flag4 = !string.IsNullOrWhiteSpace(_importFilter);
 		bool flag5 = false;
+		bool importThreadMatches =
+			string.IsNullOrWhiteSpace(_importFilterThreadName) ||
+			(_activeGuestThreadState?.Name?.Contains(
+				_importFilterThreadName,
+				StringComparison.OrdinalIgnoreCase) ?? false);
 		ExportedFunction? matchedExport = importStubEntry.Export;
 		bool periodicTrace = num <= 128 ||
 			(num >= 240 && num <= 400) ||
@@ -358,16 +363,20 @@ public sealed partial class DirectExecutionBackend
 		{
 			if (flag4)
 			{
-				flag5 = matchedExport.LibraryName.Contains(_importFilter!, StringComparison.OrdinalIgnoreCase)
-					|| matchedExport.Name.Contains(_importFilter!, StringComparison.OrdinalIgnoreCase)
-					|| importStubEntry.Nid.Contains(_importFilter!, StringComparison.OrdinalIgnoreCase);
+				flag5 = (!_importFilterExternalOnly || GuestThreadExecution.CurrentGuestThreadHandle == 0) &&
+					(matchedExport.LibraryName.Contains(_importFilter!, StringComparison.OrdinalIgnoreCase)
+					 || matchedExport.Name.Contains(_importFilter!, StringComparison.OrdinalIgnoreCase)
+					 || importStubEntry.Nid.Contains(_importFilter!, StringComparison.OrdinalIgnoreCase));
 			}
 		}
 		else if (flag4)
 		{
-			flag5 = importStubEntry.Nid.Contains(_importFilter!, StringComparison.OrdinalIgnoreCase);
+			flag5 = (!_importFilterExternalOnly || GuestThreadExecution.CurrentGuestThreadHandle == 0) &&
+				importStubEntry.Nid.Contains(_importFilter!, StringComparison.OrdinalIgnoreCase);
 		}
-		bool flag6 = _logAllImports || flag5;
+		bool flag6 = importThreadMatches &&
+			(_logAllImports || flag5 ||
+			 (!string.IsNullOrWhiteSpace(_importFilterThreadName) && !flag4));
 		if (!flag0 && (flag6 || periodicTrace))
 		{
 			if (matchedExport != null)
@@ -401,7 +410,7 @@ public sealed partial class DirectExecutionBackend
 				Console.Error.Flush();
 			}
 		}
-		if (!flag0 && !isGuestWorker)
+		if (!flag0)
 		{
 			RecordRecentImportTrace(
 				num,
@@ -541,7 +550,8 @@ public sealed partial class DirectExecutionBackend
 			{
 				GuestThreadExecution.RestoreImportCallFrame(previousImportCallFrame);
 			}
-			if (Volatile.Read(ref _pendingGuestExceptionCount) != 0)
+			if (Volatile.Read(ref _pendingGuestExceptionCount) != 0 &&
+				!GuestThreadExecution.HasPendingCurrentThreadBlock)
 			{
 				DeliverPendingGuestExceptionAtSafePoint(
 					cpuContext,
@@ -556,6 +566,7 @@ public sealed partial class DirectExecutionBackend
 			}
 			if (!dispatchResolved)
 			{
+				Interlocked.Increment(ref _unresolvedImportCount);
 				LastError = "Missing HLE export for NID: " + importStubEntry.Nid;
 				if (string.Equals(importStubEntry.Nid, "cfwBSQyr5Ys", StringComparison.Ordinal) &&
 					string.Equals(
@@ -1281,6 +1292,42 @@ public sealed partial class DirectExecutionBackend
 		cpuContext[CpuRegister.R14] = *(ulong*)(argPackPtr + 80);
 		cpuContext[CpuRegister.R15] = *(ulong*)(argPackPtr + 88);
 		cpuContext[CpuRegister.Rsp] = (ulong)argPackPtr + 96uL;
+		if (!importStubEntry.SuppressStrlenTrace)
+		{
+			RecordRecentImportTrace(
+				dispatchIndex,
+				importStubEntry.Nid,
+				returnRip,
+				arg0,
+				cpuContext[CpuRegister.Rsi],
+				cpuContext[CpuRegister.Rdx]);
+		}
+		var leafMatchesFilter =
+			!string.IsNullOrWhiteSpace(_importFilter) &&
+			(!_importFilterExternalOnly || GuestThreadExecution.CurrentGuestThreadHandle == 0) &&
+			(export.LibraryName.Contains(_importFilter, StringComparison.OrdinalIgnoreCase) ||
+			 export.Name.Contains(_importFilter, StringComparison.OrdinalIgnoreCase) ||
+			 importStubEntry.Nid.Contains(_importFilter, StringComparison.OrdinalIgnoreCase));
+		var leafThreadMatches =
+			string.IsNullOrWhiteSpace(_importFilterThreadName) ||
+			(_activeGuestThreadState?.Name?.Contains(
+				_importFilterThreadName,
+				StringComparison.OrdinalIgnoreCase) ?? false);
+		if (leafThreadMatches &&
+			(_logAllImports || leafMatchesFilter ||
+			 (!string.IsNullOrWhiteSpace(_importFilterThreadName) && string.IsNullOrWhiteSpace(_importFilter))))
+		{
+			Console.Error.WriteLine(
+				$"[LOADER][TRACE] Import#{dispatchIndex}: {export.LibraryName}:{export.Name} ({importStubEntry.Nid}) " +
+				$"rdi=0x{arg0:X16} rsi=0x{cpuContext[CpuRegister.Rsi]:X16} " +
+				$"rdx=0x{cpuContext[CpuRegister.Rdx]:X16} rcx=0x{cpuContext[CpuRegister.Rcx]:X16} " +
+				$"ret=0x{returnRip:X16}");
+			if (_logImportRecent)
+			{
+				DumpRecentImportTrace();
+			}
+			Console.Error.Flush();
+		}
 
 		if (_activeGuestThreadState is { } activeGuestThreadState)
 		{
@@ -1340,7 +1387,8 @@ public sealed partial class DirectExecutionBackend
 				GuestThreadExecution.RestoreImportCallFrame(previousImportCallFrame);
 			}
 		}
-		if (Volatile.Read(ref _pendingGuestExceptionCount) != 0)
+		if (Volatile.Read(ref _pendingGuestExceptionCount) != 0 &&
+			!GuestThreadExecution.HasPendingCurrentThreadBlock)
 		{
 			DeliverPendingGuestExceptionAtSafePoint(
 				cpuContext,
@@ -2153,30 +2201,34 @@ public sealed partial class DirectExecutionBackend
 		}
 
 		var symbolNameAddress = cpuContext[CpuRegister.Rdi];
-		var outputAddress = cpuContext[CpuRegister.Rsi];
 		if (!TryReadAsciiZ(symbolNameAddress, 512, out var symbolName) ||
-			outputAddress == 0 ||
-			!TryResolveIl2CppApiAddress(symbolName, out var resolvedAddress) ||
-			!TryWriteUInt64Compat(outputAddress, resolvedAddress))
+			!TryResolveIl2CppApiAddress(symbolName, out var resolvedAddress))
 		{
 			Console.Error.WriteLine(
-				$"[LOADER][WARN] il2cpp_api_lookup_symbol failed: name='{symbolName}' out=0x{outputAddress:X16}");
-			if (outputAddress != 0)
-			{
-				_ = TryWriteUInt64Compat(outputAddress, 0);
-			}
-
-			cpuContext[CpuRegister.Rax] = ulong.MaxValue;
+				$"[LOADER][WARN] il2cpp_api_lookup_symbol failed: name='{symbolName}'");
+			CompleteIl2CppApiLookup(cpuContext, resolved: false, resolvedAddress: 0);
 			return OrbisGen2Result.ORBIS_GEN2_OK;
 		}
 
-		cpuContext[CpuRegister.Rax] = 0;
+		CompleteIl2CppApiLookup(cpuContext, resolved: true, resolvedAddress);
 		return OrbisGen2Result.ORBIS_GEN2_OK;
+	}
+
+	internal static void CompleteIl2CppApiLookup(
+		CpuContext cpuContext,
+		bool resolved,
+		ulong resolvedAddress)
+	{
+		// Unity's PS5 IL2CPP loader uses a dlsym-style ABI: the symbol name is
+		// passed in RDI and the resolved function address is returned in RAX.
+		// RSI is caller scratch state, not an output pointer.
+		cpuContext[CpuRegister.Rax] = resolved ? resolvedAddress : 0;
 	}
 
 	private bool TryResolveIl2CppApiAddress(string symbolName, out ulong address)
 	{
-		if (TryResolveRuntimeSymbolAddress(symbolName, out address))
+		if (TryResolveRuntimeSymbolAddress(symbolName, out address) ||
+			TryResolveRuntimeSymbolAddress(ComputePsNid(symbolName), out address))
 		{
 			return true;
 		}

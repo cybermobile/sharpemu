@@ -63,6 +63,10 @@ internal sealed record VulkanOffscreenColorClear(
     float Alpha,
     ulong ShaderAddress);
 
+internal sealed record VulkanGuestImageBlit(
+    GuestRenderTarget Source,
+    GuestRenderTarget Destination);
+
 internal sealed record VulkanComputeGuestDispatch(
     ulong ShaderAddress,
     byte[] ComputeSpirv,
@@ -2013,8 +2017,7 @@ internal static unsafe class VulkanVideoPresenter
             sourceWidth == 0 ||
             sourceHeight == 0 ||
             destinationWidth == 0 ||
-            destinationHeight == 0 ||
-            !TryGetCopyFragmentShader(out var fragmentSpirv))
+            destinationHeight == 0)
         {
             return false;
         }
@@ -2027,29 +2030,24 @@ internal static unsafe class VulkanVideoPresenter
             {
                 return false;
             }
+
+            var workSequence = EnqueueGuestWorkLocked(
+                new VulkanGuestImageBlit(
+                    new GuestRenderTarget(
+                        sourceAddress,
+                        sourceWidth,
+                        sourceHeight,
+                        sourceFormat,
+                        sourceNumberType),
+                    new GuestRenderTarget(
+                        destinationAddress,
+                        destinationWidth,
+                        destinationHeight,
+                        destinationFormat,
+                        destinationNumberType)));
+            _guestImageWorkSequences[destinationAddress] = workSequence;
         }
 
-        SubmitOffscreenTranslatedDraw(
-            fragmentSpirv,
-            [
-                new GuestDrawTexture(
-                    sourceAddress,
-                    sourceWidth,
-                    sourceHeight,
-                    sourceFormat,
-                    sourceNumberType,
-                    [],
-                    IsFallback: false,
-                    IsStorage: false),
-            ],
-            [],
-            attributeCount: 1,
-            new GuestRenderTarget(
-                destinationAddress,
-                destinationWidth,
-                destinationHeight,
-                destinationFormat,
-                destinationNumberType));
         return true;
     }
 
@@ -12282,6 +12280,162 @@ internal static unsafe class VulkanVideoPresenter
         }
 
         [MethodImpl(MethodImplOptions.NoInlining)]
+        private void ExecuteGuestImageBlit(VulkanGuestImageBlit work)
+        {
+            if (_deviceLost ||
+                !TryDecodeRenderTargetFormat(
+                    work.Source.Format,
+                    work.Source.NumberType,
+                    out var sourceFormat) ||
+                !TryDecodeRenderTargetFormat(
+                    work.Destination.Format,
+                    work.Destination.NumberType,
+                    out var destinationFormat) ||
+                sourceFormat.Format != destinationFormat.Format ||
+                work.Source.Width != work.Destination.Width ||
+                work.Source.Height != work.Destination.Height)
+            {
+                return;
+            }
+
+            var source = GetOrCreateGuestImage(work.Source, sourceFormat.Format);
+            if (!source.Initialized)
+            {
+                Console.Error.WriteLine(
+                    $"[LOADER][WARN] Vulkan skipped guest image blit from uninitialized source " +
+                    $"0x{work.Source.Address:X16}.");
+                return;
+            }
+
+            var destination = GetOrCreateGuestImage(
+                work.Destination,
+                destinationFormat.Format);
+            var commandBuffer = BeginBatchedGuestCommands();
+            CloseOpenTranslatedRenderPass();
+            var range = ColorSubresourceRange();
+            var barriers = stackalloc ImageMemoryBarrier[2];
+            barriers[0] = new ImageMemoryBarrier
+            {
+                SType = StructureType.ImageMemoryBarrier,
+                SrcAccessMask = AccessFlags.ShaderReadBit | AccessFlags.MemoryWriteBit,
+                DstAccessMask = AccessFlags.TransferReadBit,
+                OldLayout = ImageLayout.ShaderReadOnlyOptimal,
+                NewLayout = ImageLayout.TransferSrcOptimal,
+                SrcQueueFamilyIndex = Vk.QueueFamilyIgnored,
+                DstQueueFamilyIndex = Vk.QueueFamilyIgnored,
+                Image = source.Image,
+                SubresourceRange = range,
+            };
+            barriers[1] = new ImageMemoryBarrier
+            {
+                SType = StructureType.ImageMemoryBarrier,
+                SrcAccessMask = destination.Initialized
+                    ? AccessFlags.ShaderReadBit | AccessFlags.MemoryWriteBit
+                    : 0,
+                DstAccessMask = AccessFlags.TransferWriteBit,
+                OldLayout = destination.Initialized
+                    ? ImageLayout.ShaderReadOnlyOptimal
+                    : ImageLayout.Undefined,
+                NewLayout = ImageLayout.TransferDstOptimal,
+                SrcQueueFamilyIndex = Vk.QueueFamilyIgnored,
+                DstQueueFamilyIndex = Vk.QueueFamilyIgnored,
+                Image = destination.Image,
+                SubresourceRange = range,
+            };
+            _vk.CmdPipelineBarrier(
+                commandBuffer,
+                PipelineStageFlags.AllCommandsBit,
+                PipelineStageFlags.TransferBit,
+                0,
+                0,
+                null,
+                0,
+                null,
+                2,
+                barriers);
+
+            var copy = new ImageCopy
+            {
+                SrcSubresource = new ImageSubresourceLayers(
+                    ImageAspectFlags.ColorBit,
+                    0,
+                    0,
+                    1),
+                DstSubresource = new ImageSubresourceLayers(
+                    ImageAspectFlags.ColorBit,
+                    0,
+                    0,
+                    1),
+                Extent = new Extent3D(source.Width, source.Height, 1),
+            };
+            _vk.CmdCopyImage(
+                commandBuffer,
+                source.Image,
+                ImageLayout.TransferSrcOptimal,
+                destination.Image,
+                ImageLayout.TransferDstOptimal,
+                1,
+                &copy);
+
+            barriers[0] = new ImageMemoryBarrier
+            {
+                SType = StructureType.ImageMemoryBarrier,
+                SrcAccessMask = AccessFlags.TransferReadBit,
+                DstAccessMask = AccessFlags.ShaderReadBit,
+                OldLayout = ImageLayout.TransferSrcOptimal,
+                NewLayout = ImageLayout.ShaderReadOnlyOptimal,
+                SrcQueueFamilyIndex = Vk.QueueFamilyIgnored,
+                DstQueueFamilyIndex = Vk.QueueFamilyIgnored,
+                Image = source.Image,
+                SubresourceRange = range,
+            };
+            barriers[1] = new ImageMemoryBarrier
+            {
+                SType = StructureType.ImageMemoryBarrier,
+                SrcAccessMask = AccessFlags.TransferWriteBit,
+                DstAccessMask = AccessFlags.ShaderReadBit,
+                OldLayout = ImageLayout.TransferDstOptimal,
+                NewLayout = ImageLayout.ShaderReadOnlyOptimal,
+                SrcQueueFamilyIndex = Vk.QueueFamilyIgnored,
+                DstQueueFamilyIndex = Vk.QueueFamilyIgnored,
+                Image = destination.Image,
+                SubresourceRange = range,
+            };
+            _vk.CmdPipelineBarrier(
+                commandBuffer,
+                PipelineStageFlags.TransferBit,
+                PipelineStageFlags.FragmentShaderBit | PipelineStageFlags.ComputeShaderBit,
+                0,
+                0,
+                null,
+                0,
+                null,
+                2,
+                barriers);
+
+            destination.Initialized = true;
+            destination.InitialUploadPending = false;
+            var guestTextureFormat = GetGuestTextureFormat(
+                work.Destination.Format,
+                work.Destination.NumberType);
+            if (guestTextureFormat != 0)
+            {
+                lock (_gate)
+                {
+                    _availableGuestImages[destination.Address] = guestTextureFormat;
+                }
+            }
+
+            if (_traceVulkanShaderEnabled)
+            {
+                TraceVulkanShader(
+                    $"vk.guest_image_blit src=0x{source.Address:X16} " +
+                    $"dst=0x{destination.Address:X16} " +
+                    $"size={source.Width}x{source.Height} format={source.Format}");
+            }
+        }
+
+        [MethodImpl(MethodImplOptions.NoInlining)]
         private void ExecuteGuestImageWrite(VulkanGuestImageWrite work)
         {
             if (_deviceLost || !_guestImages.TryGetValue(work.Address, out var target))
@@ -13872,6 +14026,9 @@ internal static unsafe class VulkanVideoPresenter
                             break;
                         case VulkanOffscreenColorClear colorClear:
                             ExecuteOffscreenColorClear(colorClear);
+                            break;
+                        case VulkanGuestImageBlit imageBlit:
+                            ExecuteGuestImageBlit(imageBlit);
                             break;
                         case VulkanComputeGuestDispatch computeDispatch:
                             ExecuteComputeDispatch(computeDispatch);

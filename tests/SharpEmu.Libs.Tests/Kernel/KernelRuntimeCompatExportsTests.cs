@@ -1,6 +1,7 @@
 // Copyright (C) 2026 SharpEmu Emulator Project
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+using SharpEmu.HLE;
 using SharpEmu.Libs.Kernel;
 using Xunit;
 
@@ -11,6 +12,56 @@ namespace SharpEmu.Libs.Tests.Kernel;
 // otherwise falls back to the QPC-based Stopwatch, so the frequency selection has to follow suit.
 public sealed class KernelRuntimeCompatExportsTests
 {
+    private const ulong GuestMemoryBase = 0x1_0000_0000;
+
+    [Fact]
+    public void RegistryIncludesSysmoduleGetModuleInfoForUnwind()
+    {
+        var manager = new ModuleManager();
+        manager.RegisterExports(SharpEmu.Generated.SysAbiExportRegistry.CreateExports(Generation.Gen5));
+
+        Assert.True(manager.TryGetExport("4fU5yvOkVG4", out var export));
+        Assert.Equal("sceSysmoduleGetModuleInfoForUnwind", export.Name);
+        Assert.Equal("libSceSysmodule", export.LibraryName);
+    }
+
+    [Fact]
+    public void SysmoduleGetModuleInfoForUnwind_UsesKernelValidation()
+    {
+        var context = new CpuContext(new FakeCpuMemory(GuestMemoryBase, 0x1000), Generation.Gen5);
+        context[CpuRegister.Rdi] = 0x8_0000_0000;
+        context[CpuRegister.Rsi] = 0;
+        context[CpuRegister.Rdx] = 0;
+
+        var result = KernelRuntimeCompatExports.SysmoduleGetModuleInfoForUnwind(context);
+
+        Assert.Equal((int)OrbisGen2Result.ORBIS_GEN2_ERROR_INVALID_ARGUMENT, result);
+    }
+
+    [Fact]
+    public void RegistryIncludesIsSignalReturn()
+    {
+        var manager = new ModuleManager();
+        manager.RegisterExports(SharpEmu.Generated.SysAbiExportRegistry.CreateExports(Generation.Gen5));
+
+        Assert.True(manager.TryGetExport("crb5j7mkk1c", out var export));
+        Assert.Equal("_is_signal_return", export.Name);
+        Assert.Equal("libKernel", export.LibraryName);
+    }
+
+    [Fact]
+    public void IsSignalReturn_ReportsNoGuestSignalTrampoline()
+    {
+        var context = new CpuContext(new FakeCpuMemory(GuestMemoryBase, 0x1000), Generation.Gen5);
+        context[CpuRegister.Rdi] = 0x1_B909_10C5;
+        context[CpuRegister.Rax] = ulong.MaxValue;
+
+        var result = KernelRuntimeCompatExports.IsSignalReturn(context);
+
+        Assert.Equal((int)OrbisGen2Result.ORBIS_GEN2_OK, result);
+        Assert.Equal(0UL, context[CpuRegister.Rax]);
+    }
+
     private static KernelRuntimeCompatExports.TryGetFrequency Yields(ulong hz) =>
         (out ulong frequencyHz) =>
         {

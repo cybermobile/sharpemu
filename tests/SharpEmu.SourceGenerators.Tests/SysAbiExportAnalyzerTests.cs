@@ -78,7 +78,7 @@ public sealed class SysAbiExportAnalyzerTests
             public static class Exports
             {
                 [SysAbiExport(Nid = "Zxa0VhQVTsk", ExportName = "sceKernelWaitSema")]
-                public static void WaitSema(CpuContext ctx) { }
+                public static float WaitSema(CpuContext ctx) => 0;
             }
             """);
 
@@ -98,6 +98,20 @@ public sealed class SysAbiExportAnalyzerTests
 
                 [SysAbiExport(Nid = "4DM06U2BNEY", ExportName = "sceKernelCancelSema")]
                 public static int CancelSema(CpuContext ctx, uint a, int b, ulong c, long d, uint e, int f) => 0;
+
+                [SysAbiExport(Nid = "1G3lF1Gg1k8", ExportName = "sceKernelOpen")]
+                public static ulong StackAndWideReturn(
+                    CpuContext ctx,
+                    uint a,
+                    int b,
+                    ulong c,
+                    long d,
+                    uint e,
+                    int f,
+                    ulong stackValue) => stackValue;
+
+                [SysAbiExport(Nid = "6c3rCVE-fTU", ExportName = "_open")]
+                public static void VoidReturn(CpuContext ctx) { }
             }
             """);
 
@@ -105,14 +119,14 @@ public sealed class SysAbiExportAnalyzerTests
     }
 
     [Fact]
-    public void TypedHandlerBeyondRegisterArgsOrWithUnsupportedTypeIsReported()
+    public void TypedHandlerWithUnsupportedTypeIsReported()
     {
         var diagnostics = Analyze("""
             using SharpEmu.HLE;
 
             public static class Exports
             {
-                // Seven args exceed the six SysV integer registers.
+                // Seven integer-class args are valid: the seventh is stack-backed.
                 [SysAbiExport(Nid = "12wOHk8ywb0", ExportName = "sceKernelPollSema")]
                 public static int TooMany(CpuContext ctx, uint a, int b, ulong c, long d, uint e, int f, int g) => 0;
 
@@ -123,8 +137,7 @@ public sealed class SysAbiExportAnalyzerTests
             """);
 
         // Order-insensitive: analyzers run concurrently and diagnostic order is unstable.
-        Assert.Equal(2, diagnostics.Count);
-        Assert.All(diagnostics, diagnostic => Assert.Equal("SHEM003", diagnostic.Id));
+        AssertSingle(diagnostics, "SHEM003");
     }
 
     [Fact]

@@ -15,6 +15,16 @@ namespace SharpEmu.Core.Cpu.Native;
 
 public sealed partial class DirectExecutionBackend
 {
+	private sealed class RecentImportTraceBuffer
+	{
+		public RecentImportTraceEntry[] Entries { get; } = new RecentImportTraceEntry[64];
+		public int Count { get; set; }
+		public int WriteIndex { get; set; }
+	}
+
+	[ThreadStatic]
+	private static RecentImportTraceBuffer? _threadRecentImportTrace;
+
 	private static readonly ConcurrentDictionary<ulong, byte> _knownExecutablePages = new();
 
 	private static readonly bool _perfHleHistogram =
@@ -74,8 +84,9 @@ public sealed partial class DirectExecutionBackend
 		ulong arg1,
 		ulong arg2)
 	{
-		var trace = _recentImportTrace;
-		trace[_recentImportTraceWriteIndex] = new RecentImportTraceEntry(
+		var buffer = _threadRecentImportTrace ??= new RecentImportTraceBuffer();
+		var trace = buffer.Entries;
+		trace[buffer.WriteIndex] = new RecentImportTraceEntry(
 			dispatchIndex,
 			nid,
 			returnRip,
@@ -84,23 +95,24 @@ public sealed partial class DirectExecutionBackend
 			arg2,
 			GuestThreadExecution.CurrentGuestThreadHandle,
 			Environment.CurrentManagedThreadId);
-		_recentImportTraceWriteIndex = (_recentImportTraceWriteIndex + 1) % trace.Length;
-		if (_recentImportTraceCount < trace.Length)
+		buffer.WriteIndex = (buffer.WriteIndex + 1) % trace.Length;
+		if (buffer.Count < trace.Length)
 		{
-			_recentImportTraceCount++;
+			buffer.Count++;
 		}
 	}
 
 	private void DumpRecentImportTrace()
 	{
-		var trace = _recentImportTrace;
-		if (trace is null || _recentImportTraceCount == 0)
+		var buffer = _threadRecentImportTrace;
+		if (buffer is null || buffer.Count == 0)
 		{
 			return;
 		}
-		Log.Info($"   Recent import calls for managed={Environment.CurrentManagedThreadId} guest=0x{GuestThreadExecution.CurrentGuestThreadHandle:X16} ({_recentImportTraceCount}):");
-		int num = (_recentImportTraceWriteIndex - _recentImportTraceCount + trace.Length) % trace.Length;
-		for (int i = 0; i < _recentImportTraceCount; i++)
+		var trace = buffer.Entries;
+		Log.Info($"   Recent import calls for managed={Environment.CurrentManagedThreadId} guest=0x{GuestThreadExecution.CurrentGuestThreadHandle:X16} ({buffer.Count}):");
+		int num = (buffer.WriteIndex - buffer.Count + trace.Length) % trace.Length;
+		for (int i = 0; i < buffer.Count; i++)
 		{
 			int num2 = (num + i) % trace.Length;
 			var entry = trace[num2];

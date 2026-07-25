@@ -3,6 +3,7 @@
 
 using System.Buffers.Binary;
 using SharpEmu.HLE;
+using SharpEmu.Libs.Agc;
 using SharpEmu.Libs.Kernel;
 using Xunit;
 
@@ -16,6 +17,56 @@ public sealed class AgcEventQueueTests
 {
     private const ulong BaseAddress = 0x1_0000_0000;
     private const int MemorySize = 0x2000;
+
+    [Fact]
+    public void DriverGetEqContextId_GraphicsEventReturnsRegisteredIdent()
+    {
+        var memory = new FakeCpuMemory(BaseAddress, MemorySize);
+        var ctx = new CpuContext(memory, Generation.Gen5);
+        const ulong eventAddress = BaseAddress + 0x100;
+        // data carries the EVENT_WRITE event type (e.g. 0x2C end-of-pipe); the
+        // context id titles compare against is the eventId they registered via
+        // sceAgcDriverAddEqEvent, which the kevent stores as ident.
+        WriteKernelEvent(
+            memory,
+            eventAddress,
+            ident: 0x81,
+            KernelEventQueueCompatExports.KernelEventFilterGraphics,
+            data: 0x2C);
+        var result = AgcExports.DriverGetEqContextId(ctx, eventAddress);
+
+        Assert.Equal((int)OrbisGen2Result.ORBIS_GEN2_OK, result);
+        Assert.Equal(0x81UL, ctx[CpuRegister.Rax]);
+    }
+
+    [Fact]
+    public void DriverGetEqContextId_NonGraphicsEventReturnsEventIdent()
+    {
+        var memory = new FakeCpuMemory(BaseAddress, MemorySize);
+        var ctx = new CpuContext(memory, Generation.Gen5);
+        const ulong eventAddress = BaseAddress + 0x100;
+        WriteKernelEvent(
+            memory,
+            eventAddress,
+            ident: 0x1234,
+            KernelEventQueueCompatExports.KernelEventFilterUser,
+            data: 7);
+        var result = AgcExports.DriverGetEqContextId(ctx, eventAddress);
+
+        Assert.Equal((int)OrbisGen2Result.ORBIS_GEN2_OK, result);
+        Assert.Equal(0x1234UL, ctx[CpuRegister.Rax]);
+    }
+
+    [Fact]
+    public void RegistryIncludesDriverGetEqContextId()
+    {
+        var manager = new ModuleManager();
+        manager.RegisterExports(SharpEmu.Generated.SysAbiExportRegistry.CreateExports(Generation.Gen5));
+
+        Assert.True(manager.TryGetExport("Zw7uUVPulbw", out var export));
+        Assert.Equal("sceAgcDriverGetEqContextId", export.Name);
+        Assert.Equal("libSceAgcDriver", export.LibraryName);
+    }
 
     [Fact]
     public void TriggerRegisteredEventsByFilter_DifferentIdentThanEventType_WakesGraphicsWaiter()
@@ -138,5 +189,20 @@ public sealed class AgcEventQueueTests
         Span<byte> buffer = stackalloc byte[8];
         BinaryPrimitives.WriteUInt64LittleEndian(buffer, value);
         Assert.True(memory.TryWrite(address, buffer));
+    }
+
+    private static void WriteKernelEvent(
+        FakeCpuMemory memory,
+        ulong address,
+        ulong ident,
+        short filter,
+        ulong data)
+    {
+        Span<byte> eventBytes = stackalloc byte[0x20];
+        eventBytes.Clear();
+        BinaryPrimitives.WriteUInt64LittleEndian(eventBytes, ident);
+        BinaryPrimitives.WriteInt16LittleEndian(eventBytes[0x08..], filter);
+        BinaryPrimitives.WriteUInt64LittleEndian(eventBytes[0x10..], data);
+        Assert.True(memory.TryWrite(address, eventBytes));
     }
 }

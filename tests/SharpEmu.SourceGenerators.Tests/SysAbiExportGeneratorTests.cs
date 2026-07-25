@@ -33,6 +33,17 @@ public sealed class SysAbiExportGeneratorTests
             [SysAbiExport(Nid = "4DM06U2BNEY", ExportName = "sceKernelCancelSema")]
             public static int CancelSema(CpuContext ctx, uint a, int b, ulong c, long d, uint e, int f) => 0;
 
+            // The seventh integer-class argument is read from the first stack slot.
+            [SysAbiExport(Nid = "stackArg001", ExportName = "testStackArgument")]
+            public static int StackArgument(CpuContext ctx, uint a, int b, ulong c, long d, uint e, int f, ulong g) => 0;
+
+            // Non-int scalar returns must preserve the complete guest-visible RAX value.
+            [SysAbiExport(Nid = "wideReturn1", ExportName = "testWideReturn")]
+            public static ulong WideReturn(CpuContext ctx, ulong value) => value;
+
+            [SysAbiExport(Nid = "voidReturn1", ExportName = "testVoidReturn")]
+            public static void VoidReturn(CpuContext ctx) { }
+
             // Guest string marshalling: the thunk reads the pointer before the handler.
             [SysAbiExport(Nid = "1G3lF1Gg1k8", ExportName = "sceKernelOpen")]
             public static int KernelOpen(CpuContext ctx, [GuestCString(4096)] string path, int flags) => 0;
@@ -86,6 +97,51 @@ public sealed class SysAbiExportGeneratorTests
             "unchecked((long)ctx[global::SharpEmu.HLE.CpuRegister.Rcx]), " +
             "unchecked((uint)ctx[global::SharpEmu.HLE.CpuRegister.R8]), " +
             "unchecked((int)ctx[global::SharpEmu.HLE.CpuRegister.R9]))",
+            generated,
+            StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void StackArgumentsAreReadAfterTheGuestReturnAddress()
+    {
+        var (_, generated) = RoslynTestHost.RunGenerator(RoslynTestHost.Compile(HandlerSource));
+
+        Assert.Contains(
+            "ctx[global::SharpEmu.HLE.CpuRegister.Rsp] + 8UL, out var stackArg6",
+            generated,
+            StringComparison.Ordinal);
+        Assert.Contains(
+            "global::TestExports.SampleExports.StackArgument(ctx, " +
+            "unchecked((uint)ctx[global::SharpEmu.HLE.CpuRegister.Rdi]), " +
+            "unchecked((int)ctx[global::SharpEmu.HLE.CpuRegister.Rsi]), " +
+            "ctx[global::SharpEmu.HLE.CpuRegister.Rdx], " +
+            "unchecked((long)ctx[global::SharpEmu.HLE.CpuRegister.Rcx]), " +
+            "unchecked((uint)ctx[global::SharpEmu.HLE.CpuRegister.R8]), " +
+            "unchecked((int)ctx[global::SharpEmu.HLE.CpuRegister.R9]), stackArg6)",
+            generated,
+            StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void NonIntReturnsWriteTheGuestReturnRegister()
+    {
+        var (_, generated) = RoslynTestHost.RunGenerator(RoslynTestHost.Compile(HandlerSource));
+
+        Assert.Contains(
+            "var result = global::TestExports.SampleExports.WideReturn(ctx, " +
+            "ctx[global::SharpEmu.HLE.CpuRegister.Rdi]);",
+            generated,
+            StringComparison.Ordinal);
+        Assert.Contains(
+            "ctx[global::SharpEmu.HLE.CpuRegister.Rax] = result;",
+            generated,
+            StringComparison.Ordinal);
+        Assert.Contains(
+            "global::TestExports.SampleExports.VoidReturn(ctx);",
+            generated,
+            StringComparison.Ordinal);
+        Assert.Contains(
+            "ctx[global::SharpEmu.HLE.CpuRegister.Rax] = 0;",
             generated,
             StringComparison.Ordinal);
     }
@@ -150,7 +206,7 @@ public sealed class SysAbiExportGeneratorTests
             public static class BrokenExports
             {
                 [SysAbiExport(ExportName = "sceKernelUsleep")]
-                public static long WrongReturn(CpuContext ctx) => 0;
+                public static float WrongReturn(CpuContext ctx) => 0;
 
                 [SysAbiExport(ExportName = "sceKernelGettimeofday")]
                 private static int Inaccessible(CpuContext ctx) => 0;

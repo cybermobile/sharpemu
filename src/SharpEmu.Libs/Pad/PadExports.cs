@@ -94,8 +94,9 @@ public static class PadExports
         return ctx.SetReturn(PrimaryPadHandle);
     }
 
-    // scePadOpen rejects a non-null 4th arg and non-standard ports; scePadOpenExt accepts a
-    // ScePadOpenExtParam* plus ports 1/2 (racing titles retry scePadOpenExt(type=2) forever if rejected).
+    // PS5 titles can use port types 1/2 with either open entry point. The plain
+    // entry point still rejects a non-null 4th argument; scePadOpenExt accepts
+    // the ScePadOpenExtParam* used by specialized controllers.
     private static int PadOpenCore(CpuContext ctx, bool extended)
     {
         var userId = unchecked((int)ctx[CpuRegister.Rdi]);
@@ -112,8 +113,7 @@ public static class PadExports
             return ctx.SetReturn(OrbisPadErrorDeviceNoHandle);
         }
 
-        var typeAccepted = extended ? type is 0 or 1 or 2 : type == StandardPortType;
-        if (userId != PrimaryUserId || !typeAccepted || index != 0 || (!extended && parameterAddress != 0))
+        if (!IsPadOpenRequestSupported(userId, type, index, parameterAddress, extended))
         {
             return ctx.SetReturn(OrbisPadErrorDeviceNotConnected);
         }
@@ -129,6 +129,17 @@ public static class PadExports
 
         return ctx.SetReturn(PrimaryPadHandle);
     }
+
+    internal static bool IsPadOpenRequestSupported(
+        int userId,
+        int type,
+        int index,
+        ulong parameterAddress,
+        bool extended) =>
+        userId == PrimaryUserId &&
+        type is 0 or 1 or 2 &&
+        index == 0 &&
+        (extended || parameterAddress == 0);
 
     [SysAbiExport(
         Nid = "6ncge5+l5Qs",
@@ -488,35 +499,39 @@ public static class PadExports
     private static bool WriteNeutralPadData(CpuContext ctx, ulong dataAddress)
     {
         Span<byte> data = stackalloc byte[PadDataSize];
-        data.Clear();
         var input = ReadHostInputState();
-        var buttons = input.Buttons;
-        var leftX = input.LeftX;
-        var leftY = input.LeftY;
-        var rightX = input.RightX;
-        var rightY = input.RightY;
-        var l2 = input.L2;
-        var r2 = input.R2;
-
-        BinaryPrimitives.WriteUInt32LittleEndian(data[0x00..], buttons);
-        data[0x04] = leftX;
-        data[0x05] = leftY;
-        data[0x06] = rightX;
-        data[0x07] = rightY;
-        data[0x08] = l2;
-        data[0x09] = r2;
-        BinaryPrimitives.WriteSingleLittleEndian(data[0x18..], 1.0f);
-        data[0x4C] = 1;
         var timestampTicks = Stopwatch.GetTimestamp();
         var timestampMicroseconds =
             ((ulong)(timestampTicks / Stopwatch.Frequency) * 1_000_000UL) +
             ((ulong)(timestampTicks % Stopwatch.Frequency) * 1_000_000UL / (ulong)Stopwatch.Frequency);
-        BinaryPrimitives.WriteUInt64LittleEndian(
-            data[0x50..],
-            timestampMicroseconds);
-        data[0x68] = 1;
+        BuildPadData(data, input, timestampMicroseconds);
 
         return ctx.Memory.TryWrite(dataAddress, data);
+    }
+
+    internal static void BuildPadData(Span<byte> data, PadState input, ulong timestampMicroseconds)
+    {
+        if (data.Length < PadDataSize)
+        {
+            throw new ArgumentException($"Pad data buffer must be at least {PadDataSize} bytes.", nameof(data));
+        }
+
+        data[..PadDataSize].Clear();
+        BinaryPrimitives.WriteUInt32LittleEndian(data[0x00..], input.Buttons);
+        data[0x04] = input.LeftX;
+        data[0x05] = input.LeftY;
+        data[0x06] = input.RightX;
+        data[0x07] = input.RightY;
+        data[0x08] = input.L2;
+        data[0x09] = input.R2;
+        BinaryPrimitives.WriteSingleLittleEndian(data[0x18..], 1.0f);
+        // ScePadData.connected follows the 0x14-byte touch-data block at 0x34.
+        // The following timestamp is 8-byte aligned at 0x50, so bytes 0x49-0x4F
+        // are padding. Writing connected at 0x4C leaves the guest-visible flag
+        // false and makes games ignore otherwise valid input samples.
+        data[0x48] = input.Connected ? (byte)1 : (byte)0;
+        BinaryPrimitives.WriteUInt64LittleEndian(data[0x50..], timestampMicroseconds);
+        data[0x68] = input.Connected ? (byte)1 : (byte)0;
     }
 
     private static PadState ReadHostInputState()

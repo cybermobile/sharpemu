@@ -37,6 +37,13 @@ public static class KernelPthreadCompatExports
         string.Equals(Environment.GetEnvironmentVariable("SHARPEMU_LOG_PTHREAD_CONDS"), "1", StringComparison.Ordinal);
     private static readonly HashSet<ulong>? _tracePthreadMutexFilter = ParseTraceAddressFilter(
         Environment.GetEnvironmentVariable("SHARPEMU_LOG_PTHREAD_MUTEX_FILTER"));
+    private static readonly bool _tracePthreadTrylockStalls =
+        string.Equals(
+            Environment.GetEnvironmentVariable("SHARPEMU_LOG_PTHREAD_TRYLOCK_STALL"),
+            "1",
+            StringComparison.Ordinal);
+    private static readonly ConcurrentDictionary<(ulong Mutex, ulong Thread), long>
+        _pthreadTrylockBusyCounts = new();
     private static long _nextSynchronizationWaiterId;
 
     private sealed class PthreadMutexState
@@ -169,12 +176,12 @@ public static class KernelPthreadCompatExports
         }
 
         var released = 0;
-        var wakeKeys = new List<string>();
+        var cooperativeWakeKeys = new List<string>();
         foreach (var pair in _mutexStates)
         {
             var state = pair.Value;
-            string? wakeKey = null;
-            lock (state)
+            PthreadMutexWaiter? grantedWaiter = null;
+            lock (state.SyncRoot)
             {
                 if (state.OwnerThreadId != threadId || state.RecursionCount <= 0)
                 {
@@ -183,10 +190,16 @@ public static class KernelPthreadCompatExports
 
                 state.OwnerThreadId = 0;
                 state.RecursionCount = 0;
-                wakeKey = state.Waiters.First?.Value.Cooperative == true
-                    ? state.Waiters.First.Value.WakeKey
-                    : null;
-                Monitor.PulseAll(state);
+                if (state.Waiters.First is { } head &&
+                    TryGrantMutexWaiterLocked(state, head.Value))
+                {
+                    grantedWaiter = head.Value;
+                    if (!grantedWaiter.Cooperative)
+                    {
+                        grantedWaiter.HostSignal!.Set();
+                    }
+                }
+
                 released++;
                 Console.Error.WriteLine(
                     $"[LOADER][WARN] pthread_mutex_abandon mutex=0x{pair.Key:X16} " +
@@ -194,13 +207,13 @@ public static class KernelPthreadCompatExports
                     $"reason={reason} waiters={state.Waiters.Count}");
             }
 
-            if (wakeKey is not null)
+            if (grantedWaiter is { Cooperative: true })
             {
-                wakeKeys.Add(wakeKey);
+                cooperativeWakeKeys.Add(grantedWaiter.WakeKey);
             }
         }
 
-        foreach (var wakeKey in wakeKeys)
+        foreach (var wakeKey in cooperativeWakeKeys)
         {
             _ = GuestThreadExecution.Scheduler?.WakeBlockedThreads(wakeKey, 1);
         }
@@ -841,6 +854,14 @@ public static class KernelPthreadCompatExports
                 var adaptiveResult = tryOnly
                     ? (int)OrbisGen2Result.ORBIS_GEN2_ERROR_BUSY
                     : (int)OrbisGen2Result.ORBIS_GEN2_OK;
+                if (tryOnly)
+                {
+                    TracePthreadTrylockStall(
+                        mutexAddress,
+                        resolvedAddress,
+                        state,
+                        currentThreadId);
+                }
                 TracePthreadMutex(ctx, tryOnly ? "trylock" : "lock-idempotent", mutexAddress, resolvedAddress, state, currentThreadId, adaptiveResult);
                 return adaptiveResult;
             }
@@ -849,6 +870,11 @@ public static class KernelPthreadCompatExports
             {
                 if (tryOnly)
                 {
+                    TracePthreadTrylockStall(
+                        mutexAddress,
+                        resolvedAddress,
+                        state,
+                        currentThreadId);
                     TracePthreadMutex(ctx, "trylock", mutexAddress, resolvedAddress, state, currentThreadId, (int)OrbisGen2Result.ORBIS_GEN2_ERROR_BUSY);
                     return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_BUSY;
                 }
@@ -861,6 +887,14 @@ public static class KernelPthreadCompatExports
             var ownedResult = tryOnly
                 ? (int)OrbisGen2Result.ORBIS_GEN2_ERROR_BUSY
                 : (int)OrbisGen2Result.ORBIS_GEN2_ERROR_DEADLOCK;
+            if (tryOnly)
+            {
+                TracePthreadTrylockStall(
+                    mutexAddress,
+                    resolvedAddress,
+                    state,
+                    currentThreadId);
+            }
             TracePthreadMutex(ctx, tryOnly ? "trylock" : "lock", mutexAddress, resolvedAddress, state, currentThreadId, ownedResult);
             return ownedResult;
         }
@@ -892,6 +926,11 @@ public static class KernelPthreadCompatExports
                 {
                     if (tryOnly)
                     {
+                        TracePthreadTrylockStall(
+                            mutexAddress,
+                            resolvedAddress,
+                            state,
+                            currentThreadId);
                         TracePthreadMutex(ctx, "trylock", mutexAddress, resolvedAddress, state, currentThreadId, (int)OrbisGen2Result.ORBIS_GEN2_ERROR_BUSY);
                         return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_BUSY;
                     }
@@ -908,6 +947,11 @@ public static class KernelPthreadCompatExports
                 {
                     if (tryOnly)
                     {
+                        TracePthreadTrylockStall(
+                            mutexAddress,
+                            resolvedAddress,
+                            state,
+                            currentThreadId);
                         TracePthreadMutex(ctx, "trylock", mutexAddress, resolvedAddress, state, currentThreadId, (int)OrbisGen2Result.ORBIS_GEN2_ERROR_BUSY);
                         return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_BUSY;
                     }
@@ -927,6 +971,14 @@ public static class KernelPthreadCompatExports
                     var ownedResult = tryOnly
                         ? (int)OrbisGen2Result.ORBIS_GEN2_ERROR_BUSY
                         : (int)OrbisGen2Result.ORBIS_GEN2_ERROR_DEADLOCK;
+                    if (tryOnly)
+                    {
+                        TracePthreadTrylockStall(
+                            mutexAddress,
+                            resolvedAddress,
+                            state,
+                            currentThreadId);
+                    }
                     TracePthreadMutex(ctx, tryOnly ? "trylock" : "lock", mutexAddress, resolvedAddress, state, currentThreadId, ownedResult);
                     return ownedResult;
                 }
@@ -949,6 +1001,11 @@ public static class KernelPthreadCompatExports
 
             if (tryOnly)
             {
+                TracePthreadTrylockStall(
+                    mutexAddress,
+                    resolvedAddress,
+                    state,
+                    currentThreadId);
                 TracePthreadMutex(ctx, "trylock", mutexAddress, resolvedAddress, state, currentThreadId, (int)OrbisGen2Result.ORBIS_GEN2_ERROR_BUSY);
                 return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_BUSY;
             }
@@ -2161,6 +2218,35 @@ public static class KernelPthreadCompatExports
             $"guest[0]=0x{guestWord0:X16} guest[8]=0x{guestWord1:X16} " +
             $"current=0x{currentThreadId:X16} owner=0x{(state?.OwnerThreadId ?? 0):X16} " +
             $"recursion={(state?.RecursionCount ?? 0)} type={(state?.Type ?? 0)} result=0x{unchecked((uint)result):X8}");
+    }
+
+    private static void TracePthreadTrylockStall(
+        ulong mutexAddress,
+        ulong resolvedAddress,
+        PthreadMutexState state,
+        ulong currentThreadId)
+    {
+        if (!_tracePthreadTrylockStalls)
+        {
+            return;
+        }
+
+        var count = _pthreadTrylockBusyCounts.AddOrUpdate(
+            (resolvedAddress, currentThreadId),
+            1,
+            static (_, previous) => previous + 1);
+        if (count != 1 && count % 100_000 != 0)
+        {
+            return;
+        }
+
+        Console.Error.WriteLine(
+            $"[LOADER][TRACE] pthread_trylock_busy_sample " +
+            $"mutex=0x{mutexAddress:X16} resolved=0x{resolvedAddress:X16} " +
+            $"current={KernelPthreadState.DescribeThreadHandle(currentThreadId)} " +
+            $"owner={KernelPthreadState.DescribeThreadHandle(state.OwnerThreadId)} " +
+            $"recursion={state.RecursionCount} type={state.Type} " +
+            $"waiters={state.QueuedWaiterCount} busy_count={count}");
     }
 
     private static void TracePthreadCond(string operation, ulong condAddress, ulong mutexAddress, PthreadCondState? state, bool timed, int result)

@@ -1016,6 +1016,20 @@ public static class KernelRuntimeCompatExports
     }
 
     [SysAbiExport(
+        Nid = "crb5j7mkk1c",
+        ExportName = "_is_signal_return",
+        Target = Generation.Gen4 | Generation.Gen5,
+        LibraryName = "libKernel")]
+    public static int IsSignalReturn(CpuContext ctx)
+    {
+        // This is used by the unwinder to recognize the kernel's signal-return
+        // trampoline. SharpEmu does not expose a guest signal trampoline, so no
+        // guest address can currently match one.
+        ctx[CpuRegister.Rax] = 0;
+        return (int)OrbisGen2Result.ORBIS_GEN2_OK;
+    }
+
+    [SysAbiExport(
         Nid = "kUpgrXIrz7Q",
         ExportName = "sceKernelGetModuleInfo",
         Target = Generation.Gen4 | Generation.Gen5,
@@ -1303,6 +1317,14 @@ public static class KernelRuntimeCompatExports
         ctx[CpuRegister.Rax] = 0;
         return (int)OrbisGen2Result.ORBIS_GEN2_OK;
     }
+
+    [SysAbiExport(
+        Nid = "4fU5yvOkVG4",
+        ExportName = "sceSysmoduleGetModuleInfoForUnwind",
+        Target = Generation.Gen4 | Generation.Gen5,
+        LibraryName = "libSceSysmodule")]
+    public static int SysmoduleGetModuleInfoForUnwind(CpuContext ctx) =>
+        KernelGetModuleInfoForUnwind(ctx);
 
     [SysAbiExport(
         Nid = "nu4a0-arQis",

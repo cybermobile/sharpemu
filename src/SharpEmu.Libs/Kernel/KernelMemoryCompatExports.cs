@@ -1949,6 +1949,19 @@ public static partial class KernelMemoryCompatExports
     }
 
     [SysAbiExport(
+        Nid = "VAzswvTOCzI",
+        ExportName = "unlink",
+        Target = Generation.Gen4 | Generation.Gen5,
+        LibraryName = "libScePosix")]
+    public static int PosixUnlink(CpuContext ctx)
+    {
+        var result = KernelUnlink(ctx);
+        return result == (int)OrbisGen2Result.ORBIS_GEN2_OK
+            ? 0
+            : PosixFailure(ctx, result);
+    }
+
+    [SysAbiExport(
         Nid = "1-LFLmRFxxM",
         ExportName = "sceKernelMkdir",
         Target = Generation.Gen4 | Generation.Gen5,
@@ -1964,6 +1977,14 @@ public static partial class KernelMemoryCompatExports
         if (!TryReadNullTerminatedUtf8(ctx, pathAddress, MaxGuestStringLength, out var guestPath))
         {
             return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT;
+        }
+
+        // The guest namespace root is a synthetic directory containing mounts
+        // such as /app0 and /temp0. It has no host path, but mkdir("/") must
+        // still report that the directory already exists instead of ENOENT.
+        if (string.Equals(guestPath, "/", StringComparison.Ordinal))
+        {
+            return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_ALREADY_EXISTS;
         }
 
         var hostPath = ResolveGuestPath(guestPath);
@@ -1983,6 +2004,7 @@ public static partial class KernelMemoryCompatExports
             var parentDirectory = Path.GetDirectoryName(hostPath);
             if (string.IsNullOrWhiteSpace(parentDirectory) || !Directory.Exists(parentDirectory))
             {
+                LogOpenTrace($"mkdir missing-parent path='{guestPath}' host='{hostPath}' parent='{parentDirectory}'");
                 return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_NOT_FOUND;
             }
 
@@ -5902,7 +5924,7 @@ public static partial class KernelMemoryCompatExports
         return true;
     }
 
-    private static bool TryWriteUInt32Compat(CpuContext ctx, ulong address, uint value)
+    internal static bool TryWriteUInt32Compat(CpuContext ctx, ulong address, uint value)
     {
         Span<byte> bytes = stackalloc byte[sizeof(uint)];
         BinaryPrimitives.WriteUInt32LittleEndian(bytes, value);

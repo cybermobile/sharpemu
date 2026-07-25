@@ -250,6 +250,13 @@ public static class GuestThreadExecution
 
     public static ulong CurrentFiberAddress => _currentFiberAddress;
 
+    /// <summary>
+    /// True after an HLE primitive requests a yield and until the native
+    /// dispatcher consumes and registers that block.
+    /// </summary>
+    public static bool HasPendingCurrentThreadBlock =>
+        !string.IsNullOrEmpty(_pendingBlockReason);
+
     public static ulong EnterGuestThread(ulong threadHandle)
     {
         var previous = _currentGuestThreadHandle;

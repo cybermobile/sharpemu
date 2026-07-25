@@ -17,6 +17,8 @@ namespace SharpEmu.Libs.Tests.Kernel;
 [Collection(KernelMemoryCompatStateCollection.Name)]
 public sealed class KernelPathCaseSensitivityTests : IDisposable
 {
+    private const string AppMountPoint = "/app0";
+    private const string CaseMountPoint = "/sharpemu_case_mnt";
     private const ulong MemoryBase = 0x1_0000_0000;
     private const ulong PathAddress = MemoryBase + 0x100;
     private const ulong StatAddress = MemoryBase + 0x400;
@@ -37,6 +39,8 @@ public sealed class KernelPathCaseSensitivityTests : IDisposable
 
     public void Dispose()
     {
+        KernelMemoryCompatExports.UnregisterGuestPathMount(AppMountPoint);
+        KernelMemoryCompatExports.UnregisterGuestPathMount(CaseMountPoint);
         Directory.Delete(_tempRoot, recursive: true);
     }
 
@@ -47,7 +51,7 @@ public sealed class KernelPathCaseSensitivityTests : IDisposable
         var unique = $"case_{Guid.NewGuid():N}";
         Directory.CreateDirectory(Path.Combine(app0Root, unique));
         File.WriteAllBytes(Path.Combine(app0Root, unique, "Data.bin"), [1, 2, 3]);
-        KernelMemoryCompatExports.RegisterGuestPathMount("/app0", app0Root);
+        KernelMemoryCompatExports.RegisterGuestPathMount(AppMountPoint, app0Root);
 
         // Prime the negative-stat cache with the wrongly-cased sibling. On a
         // case-sensitive host the probe fails and the miss is cached; on a
@@ -77,7 +81,7 @@ public sealed class KernelPathCaseSensitivityTests : IDisposable
         Directory.CreateDirectory(assetDir);
         File.WriteAllBytes(Path.Combine(assetDir, "asset.bin"), new byte[3]);
         File.WriteAllBytes(Path.Combine(assetDir, "ASSET.BIN"), new byte[7]);
-        KernelMemoryCompatExports.RegisterGuestPathMount("/app0", app0Root);
+        KernelMemoryCompatExports.RegisterGuestPathMount(AppMountPoint, app0Root);
 
         // Whichever casing resolves first lands in the size cache; the other
         // casing is a different host file and must not inherit its size.
@@ -98,7 +102,7 @@ public sealed class KernelPathCaseSensitivityTests : IDisposable
         Directory.CreateDirectory(mountRoot);
         Directory.CreateDirectory(sibling);
         File.WriteAllBytes(Path.Combine(sibling, "secret.bin"), [1]);
-        KernelMemoryCompatExports.RegisterGuestPathMount("/sharpemu_case_mnt", mountRoot);
+        KernelMemoryCompatExports.RegisterGuestPathMount(CaseMountPoint, mountRoot);
 
         // "../save/..." leaves the mount root; only a case-insensitive
         // containment check lets it pass by matching the "Save" prefix.

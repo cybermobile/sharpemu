@@ -7,6 +7,8 @@ namespace SharpEmu.Libs.Ime;
 
 public static class ImeExports
 {
+    private const int ImeKeyboardInfoSize = 36;
+
     // Quake (KEX) calls this from its main loop and from the audio bring-up path with
     // an event-handler pointer. No IME session ever exists here, so report success
     // without invoking the handler ("no pending IME events"). This NID was previously
@@ -40,6 +42,34 @@ public static class ImeExports
         LibraryName = "libSceIme")]
     public static int ImeKeyboardGetResourceId(CpuContext ctx)
     {
+        ctx[CpuRegister.Rax] = 0;
+        return (int)OrbisGen2Result.ORBIS_GEN2_OK;
+    }
+
+    [SysAbiExport(
+        Nid = "VkqLPArfFdc",
+        ExportName = "sceImeKeyboardGetInfo",
+        Target = Generation.Gen4 | Generation.Gen5,
+        LibraryName = "libSceIme")]
+    public static int ImeKeyboardGetInfo(CpuContext ctx)
+    {
+        var infoAddress = ctx[CpuRegister.Rsi];
+        if (infoAddress == 0)
+        {
+            ctx[CpuRegister.Rax] =
+                unchecked((ulong)(long)(int)OrbisGen2Result.ORBIS_GEN2_ERROR_INVALID_ARGUMENT);
+            return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_INVALID_ARGUMENT;
+        }
+
+        Span<byte> info = stackalloc byte[ImeKeyboardInfoSize];
+        info.Clear();
+        if (!ctx.Memory.TryWrite(infoAddress, info))
+        {
+            ctx[CpuRegister.Rax] =
+                unchecked((ulong)(long)(int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT);
+            return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT;
+        }
+
         ctx[CpuRegister.Rax] = 0;
         return (int)OrbisGen2Result.ORBIS_GEN2_OK;
     }

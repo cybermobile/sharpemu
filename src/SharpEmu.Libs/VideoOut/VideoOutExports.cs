@@ -198,6 +198,9 @@ public static class VideoOutExports
         public ulong VblankCount { get; set; }
         public ulong FlipCount { get; set; }
         public int CurrentBuffer { get; set; } = -1;
+        // No flip has completed yet: matches the console's initial flip status.
+        public long LastCompletedFlipArg { get; set; } = -1;
+        public int FlipPendingNum { get; set; }
         public uint OutputWidth { get; set; } = 1920;
         public uint OutputHeight { get; set; } = 1080;
         public uint RefreshRate { get; set; } = 60;
@@ -709,18 +712,31 @@ public static class VideoOutExports
         }
 
         ulong count;
-        uint currentBuffer;
+        long flipArg;
+        int flipPendingNum;
+        int currentBuffer;
         lock (_stateGate)
         {
             count = port.FlipCount;
-            currentBuffer = unchecked((uint)port.CurrentBuffer);
+            flipArg = port.LastCompletedFlipArg;
+            flipPendingNum = port.FlipPendingNum;
+            currentBuffer = port.CurrentBuffer;
         }
 
+        // SceVideoOutFlipStatus: count, processTime, tsc, flipArg, submitTsc,
+        // reserved, then gcQueueNum/flipPendingNum/currentBuffer as 32-bit
+        // fields. flipArg must be the arg of the most recently *completed* flip;
+        // titles compare it against the arg they submitted to retire buffers.
         KernelMemoryCompatExports.TryWriteUInt64Compat(ctx, statusAddress + 0x00, count);
         KernelMemoryCompatExports.TryWriteUInt64Compat(ctx, statusAddress + 0x08, 0);
         KernelMemoryCompatExports.TryWriteUInt64Compat(ctx, statusAddress + 0x10, 0);
-        KernelMemoryCompatExports.TryWriteUInt64Compat(ctx, statusAddress + 0x18, 0);
-        KernelMemoryCompatExports.TryWriteUInt64Compat(ctx, statusAddress + 0x20, currentBuffer);
+        KernelMemoryCompatExports.TryWriteUInt64Compat(ctx, statusAddress + 0x18, unchecked((ulong)flipArg));
+        KernelMemoryCompatExports.TryWriteUInt64Compat(ctx, statusAddress + 0x20, 0);
+        KernelMemoryCompatExports.TryWriteUInt64Compat(ctx, statusAddress + 0x28, 0);
+        KernelMemoryCompatExports.TryWriteUInt32Compat(ctx, statusAddress + 0x30, 0);
+        KernelMemoryCompatExports.TryWriteUInt32Compat(ctx, statusAddress + 0x34, unchecked((uint)flipPendingNum));
+        KernelMemoryCompatExports.TryWriteUInt32Compat(ctx, statusAddress + 0x38, unchecked((uint)currentBuffer));
+        KernelMemoryCompatExports.TryWriteUInt32Compat(ctx, statusAddress + 0x3C, 0);
         return (int)OrbisGen2Result.ORBIS_GEN2_OK;
     }
 
@@ -732,13 +748,19 @@ public static class VideoOutExports
     public static int VideoOutIsFlipPending(CpuContext ctx)
     {
         var handle = unchecked((int)ctx[CpuRegister.Rdi]);
-        if (!TryGetPort(handle, out _))
+        if (!TryGetPort(handle, out var port))
         {
             return OrbisVideoOutErrorInvalidHandle;
         }
 
-        ctx[CpuRegister.Rax] = 0;
-        return (int)OrbisGen2Result.ORBIS_GEN2_OK;
+        int flipPendingNum;
+        lock (_stateGate)
+        {
+            flipPendingNum = port.FlipPendingNum;
+        }
+
+        ctx[CpuRegister.Rax] = unchecked((ulong)flipPendingNum);
+        return flipPendingNum;
     }
 
     [SysAbiExport(
@@ -1159,6 +1181,7 @@ public static class VideoOutExports
 
             port.CurrentBuffer = bufferIndex;
             port.FlipCount++;
+            port.FlipPendingNum++;
             eventHint = SceVideoOutInternalEventFlip |
                 ((unchecked((ulong)flipArg) & 0x0000_FFFF_FFFF_FFFFUL) << 16);
             flipEventCount = port.FlipEvents.Count;
@@ -1193,6 +1216,18 @@ public static class VideoOutExports
 
         void TriggerFlipEvents()
         {
+            // The flip has retired: titles poll sceVideoOutGetFlipStatus for this
+            // flipArg (Unity's GfxFlipThread frees the display buffer only once
+            // the reported flipArg reaches the one it submitted).
+            lock (_stateGate)
+            {
+                port.LastCompletedFlipArg = flipArg;
+                if (port.FlipPendingNum > 0)
+                {
+                    port.FlipPendingNum--;
+                }
+            }
+
             if (flipEvents is null)
             {
                 return;
@@ -1233,6 +1268,7 @@ public static class VideoOutExports
             $"videoout.submit_flip handle={handle} index={bufferIndex} mode={flipMode} " +
             $"arg={flipArg} addr=0x{guestImageAddress:X16} submitted={guestImageSubmitted} " +
             $"events={flipEventCount} ordered_completion={!submitGpuImage}");
+        RuntimeProgress.RecordFrameSubmitted();
         ReportFrameRate(presented: false);
         var diagnosticFlipNumber = Interlocked.Increment(ref _diagnosticFlipCount);
         if (_holdFirstFlipMilliseconds > 0 && diagnosticFlipNumber == _holdFlipNumber)
@@ -1244,8 +1280,11 @@ public static class VideoOutExports
         return (int)OrbisGen2Result.ORBIS_GEN2_OK;
     }
 
-    internal static void ReportPresentedFrame() =>
+    internal static void ReportPresentedFrame()
+    {
+        RuntimeProgress.RecordFramePresented();
         ReportFrameRate(presented: true);
+    }
 
     private static void ReportFrameRate(bool presented)
     {

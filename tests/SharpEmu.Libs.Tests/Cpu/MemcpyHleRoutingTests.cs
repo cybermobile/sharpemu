@@ -14,6 +14,7 @@ public sealed class MemcpyHleRoutingTests
 {
     private const string MemcpyNid = "Q3VBxCXhUHs";
     private const string MemsetNid = "QrZZdJ8XsX0";
+    private const string Il2CppApiLookupNid = "r8mvOaWdi28";
     private const string RdtscNid = "-2IRUCO--PM";
 
     [Fact]
@@ -32,6 +33,84 @@ public sealed class MemcpyHleRoutingTests
         Assert.True(
             InvokeIsHlePreferredNid(MemsetNid),
             $"memset ({MemsetNid}) must route through HLE on every platform.");
+    }
+
+    [Fact]
+    public void IsHlePreferredNid_PrefersIl2CppApiLookupOverLoadedModuleSymbol()
+    {
+        Assert.True(
+            InvokeIsHlePreferredNid(Il2CppApiLookupNid),
+            $"IL2CPP API lookup ({Il2CppApiLookupNid}) must reach its HLE dispatcher. " +
+            "Routing it directly to a same-NID guest symbol bypasses symbol-name resolution " +
+            "and leaves Unity's IL2CPP callback table null.");
+    }
+
+    [Fact]
+    public void CompleteIl2CppApiLookup_ReturnsResolvedAddressInRax()
+    {
+        const ulong resolvedAddress = 0x0000_0008_1234_5678;
+        var context = new CpuContext(
+            new FakeCpuMemory(0x0000_7FFF_3000_0000, 0x1000),
+            Generation.Gen5);
+        context[CpuRegister.Rsi] = 0x0000_7FFF_3000_0080;
+
+        DirectExecutionBackend.CompleteIl2CppApiLookup(
+            context,
+            resolved: true,
+            resolvedAddress);
+
+        Assert.Equal(resolvedAddress, context[CpuRegister.Rax]);
+        Assert.Equal(0x0000_7FFF_3000_0080UL, context[CpuRegister.Rsi]);
+    }
+
+    [Fact]
+    public void CompleteIl2CppApiLookup_ReturnsNullWhenSymbolIsMissing()
+    {
+        var context = new CpuContext(
+            new FakeCpuMemory(0x0000_7FFF_3000_0000, 0x1000),
+            Generation.Gen5);
+        context[CpuRegister.Rax] = ulong.MaxValue;
+
+        DirectExecutionBackend.CompleteIl2CppApiLookup(
+            context,
+            resolved: false,
+            resolvedAddress: 0x0000_0008_1234_5678);
+
+        Assert.Equal(0UL, context[CpuRegister.Rax]);
+    }
+
+    [Fact]
+    public void TryResolveIl2CppApiAddress_UsesComputedNidWhenCatalogNameIsMissing()
+    {
+        if (RuntimeInformation.ProcessArchitecture != Architecture.X64)
+        {
+            return;
+        }
+
+        const string symbolName = "il2cpp_debugger_set_agent_options";
+        const string computedNid = "Sgpj9H-vi4o";
+        const ulong guestAddress = 0x0000_0008_1234_5678;
+        var backend = (DirectExecutionBackend)RuntimeHelpers.GetUninitializedObject(
+            typeof(DirectExecutionBackend));
+        var symbolsField = typeof(DirectExecutionBackend).GetField(
+            "_runtimeSymbolsByName",
+            BindingFlags.Instance | BindingFlags.NonPublic);
+        Assert.NotNull(symbolsField);
+        symbolsField.SetValue(
+            backend,
+            new Dictionary<string, ulong>(StringComparer.Ordinal)
+            {
+                [computedNid] = guestAddress,
+            });
+
+        var method = typeof(DirectExecutionBackend).GetMethod(
+            "TryResolveIl2CppApiAddress",
+            BindingFlags.Instance | BindingFlags.NonPublic);
+        Assert.NotNull(method);
+        object?[] args = [symbolName, null];
+
+        Assert.True((bool)method.Invoke(backend, args)!);
+        Assert.Equal(guestAddress, (ulong)args[1]!);
     }
 
     [Fact]

@@ -41,33 +41,54 @@ public static class SysAbiExportShape
     public enum HandlerShape
     {
         Invalid,
-        /// <summary>int M(CpuContext) — the classic raw-register shape.</summary>
+        /// <summary>M(CpuContext) — the classic raw-register shape.</summary>
         ContextOnly,
-        /// <summary>int M() — no guest state needed.</summary>
+        /// <summary>M() — no guest state needed.</summary>
         Parameterless,
-        /// <summary>int M(CpuContext, up to six int/uint/long/ulong args) — the
-        /// generator emits the SysV register unmarshalling thunk.</summary>
+        /// <summary>M(CpuContext, int/uint/long/ulong args) — the generator emits
+        /// the SysV register and stack unmarshalling thunk.</summary>
         Typed,
+    }
+
+    public enum ReturnKind
+    {
+        Invalid,
+        Int32,
+        UInt32,
+        Int64,
+        UInt64,
+        Void,
     }
 
     private const string GuestCStringAttributeName = "SharpEmu.HLE.GuestCStringAttribute";
 
-    /// <summary>Static, non-generic, returns int, takes one of the supported shapes.</summary>
+    /// <summary>Static, non-generic, returns a supported scalar, and takes one of the supported shapes.</summary>
     public static HandlerShape Classify(IMethodSymbol method, out string typedParameterKinds) =>
-        Classify(method, out typedParameterKinds, out _);
+        Classify(method, out typedParameterKinds, out _, out _);
 
     /// <summary>
     /// <paramref name="invalidGuestCString"/> distinguishes a misused [GuestCString]
     /// (wrong parameter type, non-positive MaxLength) from a plain signature mismatch,
     /// so the analyzer can point at the marshalling attribute instead of the shape.
     /// </summary>
-    public static HandlerShape Classify(IMethodSymbol method, out string typedParameterKinds, out bool invalidGuestCString)
+    public static HandlerShape Classify(
+        IMethodSymbol method,
+        out string typedParameterKinds,
+        out bool invalidGuestCString) =>
+        Classify(method, out typedParameterKinds, out invalidGuestCString, out _);
+
+    public static HandlerShape Classify(
+        IMethodSymbol method,
+        out string typedParameterKinds,
+        out bool invalidGuestCString,
+        out ReturnKind returnKind)
     {
         typedParameterKinds = string.Empty;
         invalidGuestCString = false;
+        returnKind = ClassifyReturn(method.ReturnType);
         if (!method.IsStatic ||
             method.IsGenericMethod ||
-            method.ReturnType.SpecialType != SpecialType.System_Int32)
+            returnKind == ReturnKind.Invalid)
         {
             return HandlerShape.Invalid;
         }
@@ -85,11 +106,6 @@ public static class SysAbiExportShape
         if (method.Parameters.Length == 1)
         {
             return HandlerShape.ContextOnly;
-        }
-
-        if (method.Parameters.Length > 1 + ArgumentRegisters.Length)
-        {
-            return HandlerShape.Invalid;
         }
 
         var kinds = new string[method.Parameters.Length - 1];
@@ -144,6 +160,17 @@ public static class SysAbiExportShape
         typedParameterKinds = string.Join(",", kinds);
         return HandlerShape.Typed;
     }
+
+    private static ReturnKind ClassifyReturn(ITypeSymbol type) =>
+        type.SpecialType switch
+        {
+            SpecialType.System_Int32 => ReturnKind.Int32,
+            SpecialType.System_UInt32 => ReturnKind.UInt32,
+            SpecialType.System_Int64 => ReturnKind.Int64,
+            SpecialType.System_UInt64 => ReturnKind.UInt64,
+            SpecialType.System_Void => ReturnKind.Void,
+            _ => ReturnKind.Invalid,
+        };
 
     // Symbol names are compared with an explicit fully-qualified format so
     // classification can never depend on a display-format default.

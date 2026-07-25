@@ -64,6 +64,11 @@ internal static partial class Program
         }
 
         args = NormalizeInternalArguments(args, out var isMitigatedChild);
+        if (TryRunCompatibilityAudit(args, out var auditExitCode))
+        {
+            return auditExitCode;
+        }
+
         PreloadGlfw();
 
         if (args.Length == 0)
@@ -319,6 +324,7 @@ internal static partial class Program
 
             OrbisGen2Result result;
             ConsoleCancelEventHandler? cancelHandler = null;
+            PosixSignalRegistration? terminateRegistration = null;
             try
             {
                 cancelHandler = (_, eventArgs) =>
@@ -327,6 +333,16 @@ internal static partial class Program
                     VideoOutExports.NotifyHostInterrupt();
                 };
                 Console.CancelKeyPress += cancelHandler;
+                if (!OperatingSystem.IsWindows())
+                {
+                    terminateRegistration = PosixSignalRegistration.Create(
+                        PosixSignal.SIGTERM,
+                        signalContext =>
+                        {
+                            signalContext.Cancel = true;
+                            VideoOutExports.NotifyHostInterrupt();
+                        });
+                }
 
                 Console.Error.WriteLine($"[DEBUG] Running: {ebootPath}");
                 result = runtime.Run(ebootPath);
@@ -344,6 +360,7 @@ internal static partial class Program
                 {
                     Console.CancelKeyPress -= cancelHandler;
                 }
+                terminateRegistration?.Dispose();
             }
 
             Log.Info($"SharpEmu execution completed. Result={result} (0x{(int)result:X8})");
@@ -1043,6 +1060,7 @@ internal static partial class Program
     private static void PrintUsage()
     {
         Log.Info("Usage: SharpEmu.CLI [--strict] [--trace-imports[=N]] [--cpu-engine=<native>] [--log-level=<level>] [--log-file[=<path>]] [--debug-server[=host:port]] <path-to-eboot.bin>");
+        Log.Info("Audit: SharpEmu.CLI --audit-compat <image-or-game-directory> [--audit-json=<path>]");
         Log.Info(@"Example: SharpEmu.CLI --cpu-engine=native --trace-imports=64 --log-level=debug --log-file ""E:\Games\...\eboot.bin""");
         Log.Info("Debug server: --debug-server starts a live debug listener (default 127.0.0.1:5714); connect with SharpEmu.DebugClient.");
     }

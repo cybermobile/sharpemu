@@ -100,6 +100,24 @@ public sealed class GuestThreadBlockWaiterRepresentationTests
         }
     }
 
+    [Fact]
+    public void PendingBlockIsVisibleUntilDispatcherConsumesIt()
+    {
+        var previousThread = GuestThreadExecution.EnterGuestThread(0x5678);
+        try
+        {
+            Assert.False(GuestThreadExecution.HasPendingCurrentThreadBlock);
+            Assert.True(GuestThreadExecution.RequestCurrentThreadBlock("test-block"));
+            Assert.True(GuestThreadExecution.HasPendingCurrentThreadBlock);
+            Assert.True(GuestThreadExecution.TryConsumeCurrentThreadBlock(out _));
+            Assert.False(GuestThreadExecution.HasPendingCurrentThreadBlock);
+        }
+        finally
+        {
+            GuestThreadExecution.RestoreGuestThread(previousThread);
+        }
+    }
+
     private static bool IsFuncParameter(Type parameterType)
     {
         var type = parameterType.IsByRef

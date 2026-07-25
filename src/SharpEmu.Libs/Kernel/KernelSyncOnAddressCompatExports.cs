@@ -46,6 +46,19 @@ public static class KernelSyncOnAddressCompatExports
     // a wake landing in that window bumps the generation, so the predicate is
     // already satisfied and the guest correctly resumes at once.
     private static readonly ConcurrentDictionary<ulong, long> _wakeGenerations = new();
+    private static readonly bool _traceHostWaits =
+        string.Equals(
+            Environment.GetEnvironmentVariable("SHARPEMU_LOG_SYNC_HOST"),
+            "1",
+            StringComparison.Ordinal);
+    private static readonly bool _traceSync =
+        string.Equals(
+            Environment.GetEnvironmentVariable("SHARPEMU_LOG_SYNC"),
+            "1",
+            StringComparison.Ordinal);
+    private static readonly ConcurrentDictionary<ulong, byte> _tracedHostWaitFrames = new();
+    private static long _syncWaitTraceCount;
+    private static long _syncWakeTraceCount;
 
     private static long CurrentGeneration(ulong address) =>
         _wakeGenerations.TryGetValue(address, out var generation) ? generation : 0;
@@ -67,6 +80,20 @@ public static class KernelSyncOnAddressCompatExports
 
         var observedGeneration = CurrentGeneration(address);
         var deadline = GuestThreadExecution.ComputeDeadlineTimestamp(WaitSelfHealTimeout);
+        if (_traceSync)
+        {
+            var traceCount = Interlocked.Increment(ref _syncWaitTraceCount);
+            if (ShouldTraceSyncCall(traceCount))
+            {
+                var valueText = ctx.TryReadUInt64(address, out var value)
+                    ? $"0x{value:X16}"
+                    : "unreadable";
+                Console.Error.WriteLine(
+                    $"[LOADER][TRACE] sync_address.wait count={traceCount} " +
+                    $"address=0x{address:X16} generation={observedGeneration} value={valueText} " +
+                    $"expected=0x{ctx[CpuRegister.Rsi]:X16} guest=0x{GuestThreadExecution.CurrentGuestThreadHandle:X16}");
+            }
+        }
 
         // Cooperative path: stay parked until a wake bumps this address's
         // generation (or the deadline expires as a self-heal). The guest
@@ -85,12 +112,36 @@ public static class KernelSyncOnAddressCompatExports
         // Non-cooperative caller (host main thread): bounded host wait so a
         // missed wake self-heals instead of hanging.
         var gate = _hostAddressGates.GetOrAdd(address, static _ => new object());
+        if (_traceHostWaits)
+        {
+            var valueText = ctx.TryReadUInt64(address, out var value)
+                ? $"0x{value:X16}"
+                : "unreadable";
+            Console.Error.WriteLine(
+                $"[LOADER][TRACE] sync_address.host_wait_enter " +
+                $"address=0x{address:X16} generation={observedGeneration} value={valueText}");
+            if (_tracedHostWaitFrames.TryAdd(address, 0))
+            {
+                TraceGuestFrameChain(ctx, address);
+            }
+        }
         lock (gate)
         {
             if (CurrentGeneration(address) == observedGeneration)
             {
                 Monitor.Wait(gate, WaitSelfHealTimeout);
             }
+        }
+        if (_traceHostWaits)
+        {
+            var currentGeneration = CurrentGeneration(address);
+            var valueText = ctx.TryReadUInt64(address, out var value)
+                ? $"0x{value:X16}"
+                : "unreadable";
+            Console.Error.WriteLine(
+                $"[LOADER][TRACE] sync_address.host_wait_exit " +
+                $"address=0x{address:X16} generation={currentGeneration} " +
+                $"woken={currentGeneration != observedGeneration} value={valueText}");
         }
 
         return SetReturn(ctx, OrbisGen2Result.ORBIS_GEN2_OK);
@@ -117,11 +168,29 @@ public static class KernelSyncOnAddressCompatExports
         // Bump the generation first so a wait that has registered but not yet
         // parked sees the change and resumes instead of missing this wake.
         _wakeGenerations.AddOrUpdate(address, 1, static (_, current) => current + 1);
+        if (_traceSync)
+        {
+            var traceCount = Interlocked.Increment(ref _syncWakeTraceCount);
+            if (ShouldTraceSyncCall(traceCount))
+            {
+                Console.Error.WriteLine(
+                    $"[LOADER][TRACE] sync_address.wake count={traceCount} " +
+                    $"address=0x{address:X16} requested={requested} generation={CurrentGeneration(address)} " +
+                    $"guest=0x{GuestThreadExecution.CurrentGuestThreadHandle:X16}");
+            }
+        }
 
         GuestThreadExecution.Scheduler?.WakeBlockedThreads(WakeKey(address), wakeCount);
 
         if (_hostAddressGates.TryGetValue(address, out var gate))
         {
+            if (_traceHostWaits)
+            {
+                Console.Error.WriteLine(
+                    $"[LOADER][TRACE] sync_address.host_wake " +
+                    $"address=0x{address:X16} requested={requested} generation={CurrentGeneration(address)} " +
+                    $"guest=0x{GuestThreadExecution.CurrentGuestThreadHandle:X16}");
+            }
             lock (gate)
             {
                 Monitor.PulseAll(gate);
@@ -129,6 +198,32 @@ public static class KernelSyncOnAddressCompatExports
         }
 
         return SetReturn(ctx, OrbisGen2Result.ORBIS_GEN2_OK);
+    }
+
+    private static bool ShouldTraceSyncCall(long count) =>
+        count <= 128 || (count & (count - 1)) == 0 || count % 100_000 == 0;
+
+    private static void TraceGuestFrameChain(CpuContext ctx, ulong address)
+    {
+        var frame = ctx[CpuRegister.Rbp];
+        for (var depth = 0; depth < 16 && frame >= 65536; depth++)
+        {
+            if (!ctx.TryReadUInt64(frame, out var parentFrame) ||
+                !ctx.TryReadUInt64(frame + sizeof(ulong), out var returnAddress))
+            {
+                break;
+            }
+
+            Console.Error.WriteLine(
+                $"[LOADER][TRACE] sync_address.host_frame " +
+                $"address=0x{address:X16} depth={depth} frame=0x{frame:X16} " +
+                $"return=0x{returnAddress:X16}");
+            if (parentFrame <= frame || parentFrame - frame > 0x100000)
+            {
+                break;
+            }
+            frame = parentFrame;
+        }
     }
 
     private static int SetReturn(CpuContext ctx, OrbisGen2Result result)

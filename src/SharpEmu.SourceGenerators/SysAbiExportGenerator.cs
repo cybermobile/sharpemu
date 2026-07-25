@@ -27,11 +27,21 @@ public sealed class SysAbiExportGenerator : IIncrementalGenerator
 
     private sealed class ExportModel : IEquatable<ExportModel>
     {
-        public ExportModel(string containingType, string methodName, SysAbiExportShape.HandlerShape shape, string typedParameterKinds, string libraryName, string nid, string exportName, int target)
+        public ExportModel(
+            string containingType,
+            string methodName,
+            SysAbiExportShape.HandlerShape shape,
+            SysAbiExportShape.ReturnKind returnKind,
+            string typedParameterKinds,
+            string libraryName,
+            string nid,
+            string exportName,
+            int target)
         {
             ContainingType = containingType;
             MethodName = methodName;
             Shape = shape;
+            ReturnKind = returnKind;
             TypedParameterKinds = typedParameterKinds;
             LibraryName = libraryName;
             Nid = nid;
@@ -42,6 +52,7 @@ public sealed class SysAbiExportGenerator : IIncrementalGenerator
         public string ContainingType { get; }
         public string MethodName { get; }
         public SysAbiExportShape.HandlerShape Shape { get; }
+        public SysAbiExportShape.ReturnKind ReturnKind { get; }
 
         // Deliberately a comma-joined string ("uint,int,cstring:4096") rather than an
         // array: the model must be equatable for incremental-generator caching, and a
@@ -57,6 +68,7 @@ public sealed class SysAbiExportGenerator : IIncrementalGenerator
             ContainingType == other.ContainingType &&
             MethodName == other.MethodName &&
             Shape == other.Shape &&
+            ReturnKind == other.ReturnKind &&
             TypedParameterKinds == other.TypedParameterKinds &&
             LibraryName == other.LibraryName &&
             Nid == other.Nid &&
@@ -104,7 +116,11 @@ public sealed class SysAbiExportGenerator : IIncrementalGenerator
             return null;
         }
 
-        var shape = SysAbiExportShape.Classify(method, out var typedParameterKinds);
+        var shape = SysAbiExportShape.Classify(
+            method,
+            out var typedParameterKinds,
+            out _,
+            out var returnKind);
         if (shape == SysAbiExportShape.HandlerShape.Invalid)
         {
             return null;
@@ -138,6 +154,7 @@ public sealed class SysAbiExportGenerator : IIncrementalGenerator
             method.ContainingType.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat),
             method.Name,
             shape,
+            returnKind,
             typedParameterKinds,
             libraryName,
             nid!,
@@ -186,8 +203,12 @@ public sealed class SysAbiExportGenerator : IIncrementalGenerator
 
             var function = export.Shape switch
             {
-                SysAbiExportShape.HandlerShape.ContextOnly => $"{export.ContainingType}.{export.MethodName}",
-                SysAbiExportShape.HandlerShape.Parameterless => $"static _ => {export.ContainingType}.{export.MethodName}()",
+                SysAbiExportShape.HandlerShape.ContextOnly
+                    when export.ReturnKind == SysAbiExportShape.ReturnKind.Int32 =>
+                    $"{export.ContainingType}.{export.MethodName}",
+                SysAbiExportShape.HandlerShape.Parameterless
+                    when export.ReturnKind == SysAbiExportShape.ReturnKind.Int32 =>
+                    $"static _ => {export.ContainingType}.{export.MethodName}()",
                 _ => TypedThunk(export),
             };
             builder.AppendLine(
@@ -221,25 +242,46 @@ public sealed class SysAbiExportGenerator : IIncrementalGenerator
     }
 
     /// <summary>
-    /// SysV integer-register unmarshalling: parameter i reads argument register i as a
-    /// raw ulong and reinterprets it with an unchecked cast, exactly the idiom
-    /// hand-written handlers use today. [GuestCString] parameters read the register as
-    /// a guest pointer and marshal the null-terminated UTF-8 string up front, failing
-    /// the call with ORBIS_GEN2_ERROR_MEMORY_FAULT before the handler runs.
+    /// SysV integer unmarshalling: the first six parameters read RDI, RSI, RDX, RCX,
+    /// R8, and R9; later parameters read consecutive eight-byte stack slots after the
+    /// return address. [GuestCString] parameters treat their raw value as a guest
+    /// pointer and marshal a bounded null-terminated UTF-8 string before invocation.
+    /// Full-width and unsigned returns are written explicitly so the int-based runtime
+    /// dispatch contract cannot truncate or sign-extend the guest-visible RAX value.
     /// </summary>
     private static string TypedThunk(ExportModel export)
     {
-        var kinds = export.TypedParameterKinds.Split(',');
+        var kinds = export.TypedParameterKinds.Length == 0
+            ? Array.Empty<string>()
+            : export.TypedParameterKinds.Split(',');
         var arguments = new string[kinds.Length];
         var reads = new StringBuilder();
         for (var index = 0; index < kinds.Length; index++)
         {
-            var register = "ctx[global::SharpEmu.HLE.CpuRegister." + SysAbiExportShape.ArgumentRegisters[index] + "]";
+            string rawValue;
+            if (index < SysAbiExportShape.ArgumentRegisters.Length)
+            {
+                rawValue = "ctx[global::SharpEmu.HLE.CpuRegister." +
+                    SysAbiExportShape.ArgumentRegisters[index] + "]";
+            }
+            else
+            {
+                var variable = "stackArg" + index;
+                var stackOffset = 8UL + ((ulong)(index - SysAbiExportShape.ArgumentRegisters.Length) * 8UL);
+                reads.AppendLine(
+                    $"            if (!ctx.TryReadUInt64(ctx[global::SharpEmu.HLE.CpuRegister.Rsp] + {stackOffset}UL, out var {variable}))");
+                reads.AppendLine("            {");
+                reads.AppendLine("                return ctx.SetReturn(global::SharpEmu.HLE.OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT);");
+                reads.AppendLine("            }");
+                reads.AppendLine();
+                rawValue = variable;
+            }
+
             if (kinds[index].StartsWith("cstring:", StringComparison.Ordinal))
             {
                 var maxLength = kinds[index].Substring("cstring:".Length);
                 var variable = "guestString" + index;
-                reads.AppendLine($"            if (!ctx.TryReadNullTerminatedUtf8({register}, {maxLength}, out var {variable}))");
+                reads.AppendLine($"            if (!ctx.TryReadNullTerminatedUtf8({rawValue}, {maxLength}, out var {variable}))");
                 reads.AppendLine("            {");
                 reads.AppendLine("                return ctx.SetReturn(global::SharpEmu.HLE.OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT);");
                 reads.AppendLine("            }");
@@ -249,22 +291,61 @@ public sealed class SysAbiExportGenerator : IIncrementalGenerator
             }
 
             arguments[index] = kinds[index] == "ulong"
-                ? register
-                : "unchecked((" + kinds[index] + ")" + register + ")";
+                ? rawValue
+                : "unchecked((" + kinds[index] + ")" + rawValue + ")";
         }
 
-        var invocation = export.ContainingType + "." + export.MethodName + "(ctx, " + string.Join(", ", arguments) + ")";
-        if (reads.Length == 0)
+        var handlerArguments = export.Shape switch
+        {
+            SysAbiExportShape.HandlerShape.Parameterless => string.Empty,
+            SysAbiExportShape.HandlerShape.ContextOnly => "ctx",
+            _ => "ctx, " + string.Join(", ", arguments),
+        };
+        var invocation = export.ContainingType + "." + export.MethodName + "(" + handlerArguments + ")";
+        if (reads.Length == 0 && export.ReturnKind == SysAbiExportShape.ReturnKind.Int32)
         {
             return "static ctx => " + invocation;
         }
+
+        var body = ReturnBody(export.ReturnKind, invocation);
 
         var builder = new StringBuilder();
         builder.AppendLine("static ctx =>");
         builder.AppendLine("        {");
         builder.Append(reads);
-        builder.AppendLine("            return " + invocation + ";");
+        builder.Append(body);
         builder.Append("        }");
+        return builder.ToString();
+    }
+
+    private static string ReturnBody(SysAbiExportShape.ReturnKind returnKind, string invocation)
+    {
+        var builder = new StringBuilder();
+        if (returnKind == SysAbiExportShape.ReturnKind.Int32)
+        {
+            builder.AppendLine("            return " + invocation + ";");
+            return builder.ToString();
+        }
+
+        if (returnKind == SysAbiExportShape.ReturnKind.Void)
+        {
+            builder.AppendLine("            " + invocation + ";");
+            builder.AppendLine("            ctx[global::SharpEmu.HLE.CpuRegister.Rax] = 0;");
+            builder.AppendLine("            return 0;");
+            return builder.ToString();
+        }
+
+        builder.AppendLine("            var result = " + invocation + ";");
+        var guestResult = returnKind switch
+        {
+            SysAbiExportShape.ReturnKind.UInt32 => "(ulong)result",
+            SysAbiExportShape.ReturnKind.Int64 => "unchecked((ulong)result)",
+            SysAbiExportShape.ReturnKind.UInt64 => "result",
+            _ => throw new InvalidOperationException("Unsupported SysAbi return kind."),
+        };
+        builder.AppendLine(
+            "            ctx[global::SharpEmu.HLE.CpuRegister.Rax] = " + guestResult + ";");
+        builder.AppendLine("            return unchecked((int)result);");
         return builder.ToString();
     }
 

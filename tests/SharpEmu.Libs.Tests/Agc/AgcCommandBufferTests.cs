@@ -26,6 +26,22 @@ public sealed class AgcCommandBufferTests
         Assert.Equal("libSceAgc", export.LibraryName);
     }
 
+    [Theory]
+    [InlineData("03RZmELWWzw", "sceAgcCbSetUcRegistersDirect")]
+    [InlineData("1q1titRBL6o", "sceAgcDcbDrawIndirect")]
+    [InlineData("bxGoVxpdSPQ", "sceAgcCbSetShRegisterRangeDirectGetSize")]
+    [InlineData("GPbUp9jXQa8", "sceAgcAcbWaitUntilSafeForRendering")]
+    [InlineData("e1DFTg+Sd8U", "sceAgcAcbJump")]
+    public void RegistryIncludesCompatibilityCommandEncoders(string nid, string name)
+    {
+        var manager = new ModuleManager();
+        manager.RegisterExports(SharpEmu.Generated.SysAbiExportRegistry.CreateExports(Generation.Gen5));
+
+        Assert.True(manager.TryGetExport(nid, out var export));
+        Assert.Equal(name, export.Name);
+        Assert.Equal("libSceAgc", export.LibraryName);
+    }
+
     [Fact]
     public void DcbSetShRegisterDirect_PackedRegisterInRsi_WritesSetShRegPacket()
     {
@@ -63,6 +79,63 @@ public sealed class AgcCommandBufferTests
         Assert.Equal((int)OrbisGen2Result.ORBIS_GEN2_OK, result);
         Assert.Equal(0UL, ctx[CpuRegister.Rax]);
         Assert.Equal(CommandAddress, ReadUInt64(memory, CommandBufferAddress + 0x10));
+    }
+
+    [Fact]
+    public void CbSetUcRegistersDirect_WritesContiguousUconfigPacket()
+    {
+        var memory = new FakeCpuMemory(BaseAddress, MemorySize);
+        var ctx = new CpuContext(memory, Generation.Gen5);
+        var registersAddress = BaseAddress + 0x800;
+        InitializeCommandBuffer(memory, availableDwords: 16);
+        WriteUInt32(memory, registersAddress, 0x20C);
+        WriteUInt32(memory, registersAddress + 4, 0x1234_5678);
+        WriteUInt32(memory, registersAddress + 8, 0x20D);
+        WriteUInt32(memory, registersAddress + 12, 0x9ABC_DEF0);
+
+        ctx[CpuRegister.Rdi] = CommandBufferAddress;
+        ctx[CpuRegister.Rsi] = registersAddress;
+        ctx[CpuRegister.Rdx] = 2;
+
+        Assert.Equal((int)OrbisGen2Result.ORBIS_GEN2_OK, AgcExports.CbSetUcRegistersDirect(ctx));
+        Assert.Equal(CommandAddress, ctx[CpuRegister.Rax]);
+        Assert.Equal(0xC002_7900u, ReadUInt32(memory, CommandAddress));
+        Assert.Equal(0x20Cu, ReadUInt32(memory, CommandAddress + 4));
+        Assert.Equal(0x1234_5678u, ReadUInt32(memory, CommandAddress + 8));
+        Assert.Equal(0x9ABC_DEF0u, ReadUInt32(memory, CommandAddress + 12));
+        Assert.Equal(CommandAddress + 16, ReadUInt64(memory, CommandBufferAddress + 0x10));
+    }
+
+    [Fact]
+    public void DcbDrawIndirect_WritesDrawIndirectPacket()
+    {
+        var memory = new FakeCpuMemory(BaseAddress, MemorySize);
+        var ctx = new CpuContext(memory, Generation.Gen5);
+        InitializeCommandBuffer(memory, availableDwords: 16);
+
+        Assert.Equal(
+            (int)OrbisGen2Result.ORBIS_GEN2_OK,
+            AgcExports.DcbDrawIndirect(ctx, CommandBufferAddress, 0x180, 0x4000_0000));
+        Assert.Equal(CommandAddress, ctx[CpuRegister.Rax]);
+        Assert.Equal(0xC003_2400u, ReadUInt32(memory, CommandAddress));
+        Assert.Equal(0x180u, ReadUInt32(memory, CommandAddress + 4));
+        Assert.Equal(0u, ReadUInt32(memory, CommandAddress + 8));
+        Assert.Equal(0u, ReadUInt32(memory, CommandAddress + 12));
+        Assert.Equal(0x4000_0000u, ReadUInt32(memory, CommandAddress + 16));
+    }
+
+    [Fact]
+    public void CbSetShRegisterRangeDirectGetSize_IncludesMarkerAndPayloadPacket()
+    {
+        var memory = new FakeCpuMemory(BaseAddress, MemorySize);
+        var ctx = new CpuContext(memory, Generation.Gen5);
+        ctx[CpuRegister.Rdi] = 3;
+
+        var manager = new ModuleManager();
+        manager.RegisterExports(SharpEmu.Generated.SysAbiExportRegistry.CreateExports(Generation.Gen5));
+
+        Assert.True(manager.TryDispatch("bxGoVxpdSPQ", ctx, out _));
+        Assert.Equal(28UL, ctx[CpuRegister.Rax]);
     }
 
     private static void InitializeCommandBuffer(FakeCpuMemory memory, uint availableDwords)

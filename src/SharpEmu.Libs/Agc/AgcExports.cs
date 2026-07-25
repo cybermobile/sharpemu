@@ -1199,7 +1199,18 @@ public static partial class AgcExports
         ExportName = "sceAgcCbSetShRegistersDirect",
         Target = Generation.Gen5,
         LibraryName = "libSceAgc")]
-    public static int CbSetShRegistersDirect(CpuContext ctx)
+    public static int CbSetShRegistersDirect(CpuContext ctx) =>
+        CbSetRegistersDirect(ctx, ItSetShReg);
+
+    [SysAbiExport(
+        Nid = "03RZmELWWzw",
+        ExportName = "sceAgcCbSetUcRegistersDirect",
+        Target = Generation.Gen5,
+        LibraryName = "libSceAgc")]
+    public static int CbSetUcRegistersDirect(CpuContext ctx) =>
+        CbSetRegistersDirect(ctx, ItSetUconfigReg);
+
+    private static int CbSetRegistersDirect(CpuContext ctx, uint packetOpcode)
     {
         var commandBufferAddress = ctx[CpuRegister.Rdi];
         var registersAddress = ctx[CpuRegister.Rsi];
@@ -1242,7 +1253,7 @@ public static partial class AgcExports
             var valueCount = (uint)(endIndex - startIndex);
             var packetDwords = valueCount + 2;
             if (!TryAllocateCommandDwords(ctx, commandBufferAddress, packetDwords, out var commandAddress) ||
-                !TryWriteUInt32(ctx, commandAddress, Pm4(packetDwords, ItSetShReg, 0)) ||
+                !TryWriteUInt32(ctx, commandAddress, Pm4(packetDwords, packetOpcode, 0)) ||
                 !TryWriteUInt32(ctx, commandAddress + 4, registers[startIndex].Offset & 0xFFFFu))
             {
                 return ReturnPointer(ctx, 0);
@@ -1500,6 +1511,14 @@ public static partial class AgcExports
         TraceAgc($"agc.cb_set_sh_range buf=0x{commandBufferAddress:X16} cmd=0x{commandAddress:X16} offset=0x{offset:X8} count={valueCount}");
         return ReturnPointer(ctx, commandAddress);
     }
+
+    [SysAbiExport(
+        Nid = "bxGoVxpdSPQ",
+        ExportName = "sceAgcCbSetShRegisterRangeDirectGetSize",
+        Target = Generation.Gen5,
+        LibraryName = "libSceAgc")]
+    public static ulong CbSetShRegisterRangeDirectGetSize(CpuContext ctx, uint valueCount) =>
+        ((ulong)valueCount + 4u) * sizeof(uint);
 
     [SysAbiExport(
         Nid = "wr23dPKyWc0",
@@ -1793,6 +1812,34 @@ public static partial class AgcExports
         }
 
         TraceAgc($"agc.dcb_draw_index_auto buf=0x{commandBufferAddress:X16} cmd=0x{commandAddress:X16} count={indexCount}");
+        return ReturnPointer(ctx, commandAddress);
+    }
+
+    [SysAbiExport(
+        Nid = "1q1titRBL6o",
+        ExportName = "sceAgcDcbDrawIndirect",
+        Target = Generation.Gen5,
+        LibraryName = "libSceAgc")]
+    public static int DcbDrawIndirect(
+        CpuContext ctx,
+        ulong commandBufferAddress,
+        uint dataOffset,
+        uint modifier)
+    {
+        if (commandBufferAddress == 0 ||
+            !TryAllocateCommandDwords(ctx, commandBufferAddress, 5, out var commandAddress) ||
+            !TryWriteUInt32(ctx, commandAddress, Pm4(5, ItDrawIndirect, 0)) ||
+            !TryWriteUInt32(ctx, commandAddress + 4, dataOffset) ||
+            !TryWriteUInt32(ctx, commandAddress + 8, 0) ||
+            !TryWriteUInt32(ctx, commandAddress + 12, 0) ||
+            !TryWriteUInt32(ctx, commandAddress + 16, modifier))
+        {
+            return ReturnPointer(ctx, 0);
+        }
+
+        TraceAgc(
+            $"agc.dcb_draw_indirect buf=0x{commandBufferAddress:X16} " +
+            $"cmd=0x{commandAddress:X16} offset=0x{dataOffset:X8} modifier=0x{modifier:X8}");
         return ReturnPointer(ctx, commandAddress);
     }
 
@@ -2807,6 +2854,14 @@ public static partial class AgcExports
     }
 
     [SysAbiExport(
+        Nid = "GPbUp9jXQa8",
+        ExportName = "sceAgcAcbWaitUntilSafeForRendering",
+        Target = Generation.Gen5,
+        LibraryName = "libSceAgc")]
+    public static int AcbWaitUntilSafeForRendering(CpuContext ctx) =>
+        DcbWaitUntilSafeForRendering(ctx);
+
+    [SysAbiExport(
         Nid = "MWiElSNE8j8",
         ExportName = "sceAgcDcbWaitUntilSafeForRendering",
         Target = Generation.Gen5,
@@ -3082,6 +3137,40 @@ public static partial class AgcExports
     }
 
     [SysAbiExport(
+        Nid = "Zw7uUVPulbw",
+        ExportName = "sceAgcDriverGetEqContextId",
+        Target = Generation.Gen5,
+        LibraryName = "libSceAgcDriver")]
+    public static int DriverGetEqContextId(CpuContext ctx, ulong eventAddress)
+    {
+        if (eventAddress == 0)
+        {
+            return ReturnPointer(ctx, 0);
+        }
+
+        Span<byte> eventBytes = stackalloc byte[0x18];
+        if (!ctx.Memory.TryRead(eventAddress, eventBytes))
+        {
+            return ReturnPointer(ctx, 0);
+        }
+
+        var ident = BinaryPrimitives.ReadUInt64LittleEndian(eventBytes);
+        var filter = BinaryPrimitives.ReadInt16LittleEndian(eventBytes[0x08..]);
+        var data = BinaryPrimitives.ReadUInt64LittleEndian(eventBytes[0x10..]);
+        // The context id is the id the title passed to sceAgcDriverAddEqEvent,
+        // which RegisterEvent stores as the kevent ident. The data field of a
+        // graphics kevent carries the EVENT_WRITE event type (for example 0x2C
+        // end-of-pipe), so returning it here makes titles discard their own
+        // completion events as belonging to an unknown context.
+        var contextId = (uint)ident;
+
+        TraceAgc(
+            $"agc.driver_get_eq_context_id event=0x{eventAddress:X16} " +
+            $"filter={filter} ident=0x{ident:X16} data=0x{data:X16} context={contextId}");
+        return ReturnPointer(ctx, contextId);
+    }
+
+    [SysAbiExport(
     Nid = "uJziRsODk1c",
     ExportName = "sceAgcDriverGetResourceRegistrationMaxNameLength",
     Target = Generation.Gen5,
@@ -3265,6 +3354,7 @@ public static partial class AgcExports
         state.CompletionEventNotifiedSubmissionId = submissionId;
         void TriggerCompletionEvents()
         {
+            RuntimeProgress.RecordGpuSubmissionCompleted();
             var triggered = KernelEventQueueCompatExports.TriggerRegisteredEvents(
                 ident: 0,
                 KernelEventQueueCompatExports.KernelEventFilterGraphics,
@@ -12620,6 +12710,14 @@ public static partial class AgcExports
         ctx[CpuRegister.Rax] = 4u * sizeof(uint);
         return (int)ctx[CpuRegister.Rax];
     }
+
+    [SysAbiExport(
+        Nid = "e1DFTg+Sd8U",
+        ExportName = "sceAgcAcbJump",
+        Target = Generation.Gen5,
+        LibraryName = "libSceAgc")]
+    public static int AcbJump(CpuContext ctx) =>
+        DcbJump(ctx);
 
     [SysAbiExport(
         Nid = "xSAR0LTcRKM",

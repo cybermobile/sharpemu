@@ -61,6 +61,47 @@ public sealed class KernelMemoryCompatExportsTests
     }
 
     [Fact]
+    public void PosixUnlink_MissingFileReturnsMinusOne()
+    {
+        const ulong pathAddress = GuestMemoryBase + 0x100;
+        var memory = new FakeCpuMemory(GuestMemoryBase, 0x1000);
+        var context = new CpuContext(memory, Generation.Gen5);
+        memory.WriteCString(pathAddress, "/__sharpemu_test_missing__/preferences.tmp");
+        context[CpuRegister.Rdi] = pathAddress;
+
+        var result = KernelMemoryCompatExports.PosixUnlink(context);
+
+        Assert.Equal(-1, result);
+        Assert.Equal(ulong.MaxValue, context[CpuRegister.Rax]);
+    }
+
+    [Fact]
+    public void RegistryIncludesPosixUnlink()
+    {
+        var manager = new ModuleManager();
+        manager.RegisterExports(SharpEmu.Generated.SysAbiExportRegistry.CreateExports(Generation.Gen5));
+
+        Assert.True(manager.TryGetExport("VAzswvTOCzI", out var export));
+        Assert.Equal("unlink", export.Name);
+        Assert.Equal("libScePosix", export.LibraryName);
+    }
+
+    [Fact]
+    public void KernelMkdir_GuestRootReturnsAlreadyExists()
+    {
+        const ulong memoryBase = 0x1_0000_0000;
+        const ulong pathAddress = memoryBase + 0x100;
+        var memory = new FakeCpuMemory(memoryBase, 0x1000);
+        var context = new CpuContext(memory, Generation.Gen5);
+        memory.WriteCString(pathAddress, "/");
+        context[CpuRegister.Rdi] = pathAddress;
+
+        var result = KernelMemoryCompatExports.KernelMkdir(context);
+
+        Assert.Equal((int)OrbisGen2Result.ORBIS_GEN2_ERROR_ALREADY_EXISTS, result);
+    }
+
+    [Fact]
     public void PosixFstat_BadDescriptorReturnsMinusOne()
     {
         const ulong memoryBase = 0x1_0000_0000;

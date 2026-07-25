@@ -139,6 +139,7 @@ public sealed class SharpEmuRuntime : ISharpEmuRuntime
         LastSessionSummary = null;
         LastBasicBlockTrace = null;
         LastMilestoneLog = null;
+        RuntimeProgress.Reset();
         FiberExports.ResetRuntimeState();
         KernelModuleRegistry.Reset();
         var image = LoadImage(normalizedEbootPath);

@@ -13,7 +13,7 @@ namespace SharpEmu.GUI;
 /// cannot be reliably reused while guest-created host threads are still alive,
 /// so the GUI must never execute a game in its own process.
 /// </summary>
-internal sealed class EmulatorProcess : IDisposable
+internal sealed partial class EmulatorProcess : IDisposable
 {
     public const int HostStopExitCode = -2;
 
@@ -27,6 +27,8 @@ internal sealed class EmulatorProcess : IDisposable
     private const int JobObjectExtendedLimitInformationClass = 9;
     private const string MitigatedChildFlag = "--sharpemu-mitigated-child";
     private const string MitigatedChildEnvironment = "SHARPEMU_MITIGATED_CHILD";
+    private const int PosixSigTerm = 15;
+    private static readonly TimeSpan ForcedStopGracePeriod = TimeSpan.FromSeconds(5);
     private const ulong ControlFlowGuardAlwaysOff = 0x00000002UL << 40;
     private const ulong CetUserShadowStacksAlwaysOff = 0x00000002UL << 28;
     private const ulong UserCetSetContextIpValidationAlwaysOff = 0x00000002UL << 32;
@@ -115,12 +117,44 @@ internal sealed class EmulatorProcess : IDisposable
         {
             if (fallbackProcess is { HasExited: false })
             {
+                if (!OperatingSystem.IsWindows() &&
+                    KillUnix(fallbackProcess.Id, PosixSigTerm) == 0)
+                {
+                    _ = ForceKillAfterGracePeriodAsync(fallbackProcess);
+                    return;
+                }
+
                 fallbackProcess.Kill(entireProcessTree: true);
             }
         }
         catch (InvalidOperationException)
         {
             // The process exited while Stop was handling the request.
+        }
+    }
+
+    private async Task ForceKillAfterGracePeriodAsync(Process process)
+    {
+        await Task.Delay(ForcedStopGracePeriod).ConfigureAwait(false);
+
+        lock (_sync)
+        {
+            if (!_running || !ReferenceEquals(_fallbackProcess, process))
+            {
+                return;
+            }
+        }
+
+        try
+        {
+            if (!process.HasExited)
+            {
+                process.Kill(entireProcessTree: true);
+            }
+        }
+        catch (InvalidOperationException)
+        {
+            // The cooperative SIGTERM completed between the state check and Kill.
         }
     }
 
@@ -505,6 +539,9 @@ internal sealed class EmulatorProcess : IDisposable
         builder.Append('"');
         return builder.ToString();
     }
+
+    [LibraryImport("libc", EntryPoint = "kill", SetLastError = true)]
+    private static partial int KillUnix(int processId, int signal);
 
     private void ThrowIfDisposed()
     {
