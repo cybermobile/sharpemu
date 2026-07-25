@@ -169,6 +169,11 @@ public static partial class Gen5SpirvTranslator
 
     private sealed partial class CompilationContext
     {
+        // Shaders translate on several threads, and the same program recompiles
+        // across pipeline variants; dump each stage/address pair only once.
+        private static readonly System.Collections.Concurrent.ConcurrentDictionary<
+            (Gen5SpirvStage Stage, ulong Address), byte> _dumpedSpirvModules = new();
+
         private const uint ImageDescriptorDwords = 8;
         private const uint SamplerDescriptorDwords = 4;
         private const int ScalarRegisterCount = 128;
@@ -688,12 +693,64 @@ public static partial class Gen5SpirvTranslator
                         ? _evaluation.VertexInputs ?? []
                         : [],
                     _gdsBufferIndex >= 0);
+                DumpSpirvIfRequested(shader.Spirv);
                 return true;
             }
             catch (Exception exception)
             {
                 error = exception.Message;
                 return false;
+            }
+        }
+
+        /// <summary>
+        /// Writes each translated module to SHARPEMU_DUMP_SPIRV so its lowering can
+        /// be disassembled and compared against a reference translator. Set
+        /// SHARPEMU_DUMP_SPIRV_ADDRS to a comma-separated address list to capture
+        /// only the shaders under investigation; every module is written otherwise.
+        /// </summary>
+        private void DumpSpirvIfRequested(byte[] spirv)
+        {
+            var directory = Environment.GetEnvironmentVariable("SHARPEMU_DUMP_SPIRV");
+            if (string.IsNullOrWhiteSpace(directory))
+            {
+                return;
+            }
+
+            var address = _state.Program.Address;
+            var filter = Environment.GetEnvironmentVariable("SHARPEMU_DUMP_SPIRV_ADDRS");
+            if (!string.IsNullOrWhiteSpace(filter) &&
+                !filter.Split([',', ';', ' '], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+                    .Any(token => ulong.TryParse(
+                            token.StartsWith("0x", StringComparison.OrdinalIgnoreCase) ? token[2..] : token,
+                            System.Globalization.NumberStyles.HexNumber,
+                            System.Globalization.CultureInfo.InvariantCulture,
+                            out var wanted) &&
+                        wanted == address))
+            {
+                return;
+            }
+
+            if (!_dumpedSpirvModules.TryAdd((_stage, address), 0))
+            {
+                return;
+            }
+
+            try
+            {
+                Directory.CreateDirectory(directory);
+                File.WriteAllBytes(
+                    Path.Combine(
+                        directory,
+                        $"{_stage.ToString().ToLowerInvariant()}-0x{address:X16}.spv"),
+                    spirv);
+            }
+            catch (IOException)
+            {
+                // Diagnostics must never break translation.
+            }
+            catch (UnauthorizedAccessException)
+            {
             }
         }
 
