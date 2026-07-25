@@ -662,8 +662,9 @@ public sealed class SharpEmuRuntime : ISharpEmuRuntime
             .Where(entry =>
             {
                 var extension = Path.GetExtension(entry.Path);
-                return string.Equals(extension, ".prx", StringComparison.OrdinalIgnoreCase) ||
-                       string.Equals(extension, ".sprx", StringComparison.OrdinalIgnoreCase);
+                return (string.Equals(extension, ".prx", StringComparison.OrdinalIgnoreCase) ||
+                        string.Equals(extension, ".sprx", StringComparison.OrdinalIgnoreCase)) &&
+                       !IsAppleDoubleSidecar(entry.Path);
             })
             .GroupBy(entry => entry.Path, StringComparer.OrdinalIgnoreCase)
             .Select(group => group.First())
@@ -969,6 +970,16 @@ public sealed class SharpEmuRuntime : ISharpEmuRuntime
 
         return !PreloadSkipModules.Contains(fileName);
     }
+
+    /// <summary>
+    /// macOS writes an AppleDouble "._name" sidecar next to each file on
+    /// filesystems without native resource-fork support (exFAT USB dumps, for
+    /// example). Those sidecars carry a .prx extension but hold metadata, so
+    /// loading one reports a decryption failure that looks like an encrypted
+    /// retail image and hides the real module results.
+    /// </summary>
+    private static bool IsAppleDoubleSidecar(string modulePath) =>
+        Path.GetFileName(modulePath).StartsWith("._", StringComparison.Ordinal);
 
     private int RegisterLoadedModule(string modulePath, SelfImage image, bool isMain, bool isSystemModule)
     {
